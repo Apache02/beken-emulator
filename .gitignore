@@ -1,0 +1,69 @@
+# Build
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+install_manifest.txt
+Testing/
+_deps/
+
+# compile_commands.json is generated; when needed it lives in build/
+/compile_commands.json
+
+# Object files and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.pch
+*.gch
+*.d
+
+# Debugging and profiling
+/core
+core.*
+!src/core/
+vgcore.*
+*.log
+*.pdb
+*.ilk
+callgrind.out.*
+perf.data*
+gmon.out
+*.gcda
+*.gcno
+*.gcov
+coverage/
+
+# Tool caches
+.cache/
+.clangd/
+.ccls-cache/
+
+# IDEs and editors
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Firmware images and traces that should not be committed (created locally)
+*.bin
+*.elf
+*.hex
+*.trace

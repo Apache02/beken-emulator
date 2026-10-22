@@ -1,0 +1,658 @@
+#include <doctest/doctest.h>
+
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <tuple>
+#include <vector>
+
+#include "core/log.h"
+#include "periph/crc16.h"
+#include "periph/flash.h"
+
+using namespace bk;
+
+namespace {
+
+constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kSrCnt = 0x14, kConf = 0x1C;
+constexpr uint32_t kCrcEn    = 1u << 26;
+constexpr uint32_t kWindow2M = 0x1E2000; // 61680 blocks * 32, rounded up to 4 KiB
+
+enum Op : uint32_t {
+    RDID  = 20,
+    READ  = 5,
+    RDSR  = 3,
+    RDSR2 = 6,
+    WREN  = 1,
+    WRDI  = 2,
+    WRSR  = 4,
+    WRSR2 = 7,
+    PP    = 12,
+    SE    = 13,
+    BE1   = 14,
+    BE2   = 15,
+    CE    = 16
+};
+
+// Bit-by-bit CRC written independently of the implementation under test.
+uint16_t bitwise_crc(const std::vector<uint8_t> &d) {
+    uint32_t c = 0xFFFF;
+    for (uint8_t byte : d) {
+        for (int bit = 7; bit >= 0; --bit) {
+            bool in  = (byte >> bit) & 1;
+            bool top = (c >> 15) & 1;
+            c        = (c << 1) & 0xFFFF;
+            if (in != top) c ^= 0x8005;
+        }
+    }
+    return static_cast<uint16_t>(c);
+}
+
+// One 34-byte block with data first, first+1, ... and its CRC (corrupted if !good).
+std::vector<uint8_t> block(uint8_t first, bool good = true) {
+    std::vector<uint8_t> b;
+    for (int i = 0; i < 32; ++i) b.push_back(static_cast<uint8_t>(first + i));
+    uint16_t crc = bitwise_crc(b);
+    if (!good) crc ^= 1;
+    b.push_back(static_cast<uint8_t>(crc >> 8));
+    b.push_back(static_cast<uint8_t>(crc & 0xFF));
+    return b;
+}
+
+std::vector<uint8_t> cat(std::vector<uint8_t> a, const std::vector<uint8_t> &b) {
+    a.insert(a.end(), b.begin(), b.end());
+    return a;
+}
+
+using Call = std::tuple<std::string, uint32_t, uint32_t>;
+
+struct Fixture {
+    std::ostringstream out;
+    std::vector<Call>  inv;
+    Flash              flash;
+
+    explicit Fixture(uint32_t size = 0x200000, uint32_t jedec = 0x1C7015) : flash("flash", size, jedec) {
+        Logger::reset_for_tests();
+        Logger::configure(out, false);
+        flash.invalidate = [this](const std::string &r, uint32_t o, uint32_t s) { inv.emplace_back(r, o, s); };
+    }
+    ~Fixture() { Logger::reset_for_tests(); }
+
+    void     w(uint32_t off, uint32_t v) { flash.write("ctrl", off, 4, v); }
+    uint32_t r(uint32_t off) { return flash.read("ctrl", off, 4); }
+    void     cmd(uint32_t op, uint32_t addr = 0, bool wp = true) {
+        w(kOperate, addr | op << 24 | 1u << 29 | (wp ? 1u << 30 : 0));
+    }
+    uint32_t rdsr() {
+        cmd(RDSR);
+        return r(kSrCnt) & 0xFFFF;
+    }
+    void wrsr(uint32_t op, uint32_t data) {
+        w(kConf, kCrcEn | data << 10);
+        cmd(op);
+    }
+    std::optional<Fault> xip_fault(uint32_t off, uint32_t size = 4) {
+        try {
+            flash.read("xip", off, size);
+        } catch (const Fault &f) {
+            return f;
+        }
+        return std::nullopt;
+    }
+    size_t count(const std::string &s) const {
+        std::string all = out.str();
+        size_t      n   = 0;
+        for (size_t p = all.find(s); p != std::string::npos; p = all.find(s, p + 1)) ++n;
+        return n;
+    }
+};
+
+std::string alert(const char *logical, int blk, const char *physical) {
+    return std::string("ERROR emulator.flash: ALERT: XIP read of an unreadable block (bad CRC or "
+                       "past the end of flash): logical ") +
+           logical + ", block " + std::to_string(blk) + ", physical " + physical + "\n";
+}
+
+} // namespace
+
+TEST_CASE("crc16 known") {
+    std::vector<uint8_t> ff(32, 0xFF);
+    CHECK(crc16(ff) == bitwise_crc(ff));
+    CHECK(crc16(ff) == 0x000C);
+    std::vector<uint8_t> check{'1', '2', '3', '4', '5', '6', '7', '8', '9'};
+    CHECK(crc16(check) == 0xAEE7); // published check value of this CRC variant
+    std::vector<uint8_t> ramp = block(0);
+    ramp.resize(32);
+    CHECK(crc16(ramp) == bitwise_crc(ramp));
+    CHECK(crc16(ramp) == 0x259D);
+}
+
+TEST_CASE("load aligns to 34") {
+    Fixture f;
+    CHECK(f.flash.loadable());
+    CHECK_THROWS_WITH_AS(f.flash.check_load(1, 10),
+                         "flash load of 10 bytes at 0x1 must start on a 34-byte block boundary",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(f.flash.check_load(0x22, 0x200000),
+                         "flash load of 2097152 bytes at 0x22 does not fit the 2097152 byte flash",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(f.flash.check_load(0, 0x200001),
+                         "flash load of 2097153 bytes at 0x0 does not fit the 2097152 byte flash",
+                         std::invalid_argument);
+    CHECK_NOTHROW(f.flash.check_load(0, 0));
+    CHECK_NOTHROW(f.flash.check_load(0, 7));
+    CHECK_NOTHROW(f.flash.check_load(0, 0x200000));
+    CHECK_NOTHROW(f.flash.check_load(0x11000 - 0x11000 % 34, 5));
+    std::vector<uint8_t> d{1, 2, 3};
+    CHECK_THROWS_AS(f.flash.load(2, d), std::invalid_argument);
+    CHECK(f.flash.raw() == std::vector<uint8_t>(0x200000, 0xFF));
+    f.flash.load(34, d);
+    std::vector<uint8_t> raw = f.flash.raw();
+    CHECK(raw[33] == 0xFF);
+    CHECK(raw[34] == 1);
+    CHECK(raw[36] == 3);
+    CHECK(raw[37] == 0xFF);
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, kWindow2M}
+    });
+}
+
+TEST_CASE("xip decodes data bytes") {
+    Fixture f;
+    CHECK(f.flash.name() == "flash");
+    REQUIRE(f.flash.ranges().size() == 2);
+    CHECK(f.flash.ranges()[0].name == "xip");
+    CHECK(f.flash.ranges()[0].size == kWindow2M);
+    CHECK(f.flash.ranges()[1].name == "ctrl");
+    CHECK(f.flash.ranges()[1].size == 0x28);
+    REQUIRE(f.flash.demand_ranges().size() == 1);
+    CHECK(f.flash.demand_ranges()[0].name == "xip");
+    CHECK(f.flash.demand_ranges()[0].size == kWindow2M);
+
+    f.flash.load(0, cat(block(0x00), block(0x40)));
+    CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
+    CHECK(f.flash.read("xip", 0, 4) == 0x03020100);
+    CHECK(f.flash.read("xip", 61, 1) == 0x5D);
+    CHECK(f.flash.read("xip", 62, 2) == 0x5F5E);
+    Page p = f.flash.page("xip", 0);
+    CHECK(p.data[31] == 0x1F);
+    CHECK(p.data[32] == 0x40);
+    CHECK(p.data[63] == 0x5F);
+    // Erased blocks (all 0xFF) do not carry a matching CRC.
+    CHECK(p.data[64] == 0);
+    REQUIRE(p.bad.size() == 126);
+    CHECK(p.bad.front().start == 64);
+    CHECK(p.bad.front().end == 96);
+    CHECK(p.bad.back().start == 4064);
+    CHECK(p.bad.back().end == 4096);
+    CHECK(f.out.str().empty());
+}
+
+TEST_CASE("bad crc block is bad span and read faults") {
+    Fixture f;
+    f.flash.load(0, cat(cat(block(0x00), block(0x40, false)), block(0x80)));
+    Page p = f.flash.page("xip", 0);
+    REQUIRE(p.bad.size() == 126);
+    CHECK(p.bad[0].start == 32);
+    CHECK(p.bad[0].end == 64);
+    CHECK(p.bad[1].start == 96);
+    CHECK(p.bad[1].end == 128);
+    for (int i = 32; i < 64; ++i) CHECK(p.data[i] == 0);
+    CHECK(p.data[64] == 0x80);
+    CHECK(f.out.str().empty()); // page() does not log
+
+    CHECK(f.flash.read("xip", 64, 4) == 0x83828180);
+    auto e = f.xip_fault(36);
+    REQUIRE(e);
+    CHECK(e->kind == Fault::Kind::Dabt);
+    CHECK(e->addr == 36);
+    CHECK(f.out.str() == alert("0x00000024", 1, "0x000026"));
+    REQUIRE(f.xip_fault(40));
+    REQUIRE(f.xip_fault(32, 1));
+    CHECK(f.count("ALERT") == 1); // same block repeats: suppressed
+    CHECK(f.flash.read("xip", 0, 4) == 0x03020100);
+    REQUIRE(f.xip_fault(36));
+    CHECK(f.count("ALERT") == 1); // a good read in between does not end the run
+    REQUIRE(f.xip_fault(100));
+    CHECK(f.count(alert("0x00000064", 3, "0x00006A")) == 1);
+    REQUIRE(f.xip_fault(44));
+    CHECK(f.count(alert("0x0000002C", 1, "0x00002E")) == 1);
+    CHECK(f.count("ALERT") == 3);
+}
+
+TEST_CASE("crc_en clear reads bad block") {
+    Fixture f;
+    f.flash.load(0, cat(block(0x00), block(0x40, false)));
+    CHECK(f.r(kConf) == kCrcEn);
+    f.w(kConf, 0);
+    CHECK(f.flash.read("xip", 36, 4) == 0x47464544);
+    CHECK(f.flash.read("xip", 64, 4) == 0xFFFFFFFF);
+    Page p = f.flash.page("xip", 0);
+    CHECK(p.bad.empty());
+    CHECK(p.data[32] == 0x40);
+    CHECK(p.data[64] == 0xFF);
+    CHECK(f.out.str().empty());
+}
+
+TEST_CASE("read id register") {
+    Fixture f;
+    CHECK(f.r(kId) == 0x1C7015);
+    f.cmd(RDID);
+    CHECK(f.r(kId) == 0x1C7015);
+    Fixture g(0x200000, 0xC84016);
+    CHECK(g.r(kId) == 0xC84016);
+    f.w(kId, 0);
+    CHECK(f.r(kId) == 0x1C7015);
+    // operate_sw reads back without busy (31) and start (29).
+    f.w(kOperate, 0xFFFFFFFF & ~(0x1Fu << 24));
+    CHECK(f.r(kOperate) == 0x40FFFFFF);
+    CHECK(f.r(kWriteData) == 0);
+    CHECK(f.r(0x0C) == 0);
+    CHECK(f.r(0x18) == 0);
+    CHECK(f.r(0x20) == 0);
+    CHECK(f.r(0x24) == 0);
+}
+
+TEST_CASE("command read 32 bytes via fifo") {
+    Fixture              f;
+    std::vector<uint8_t> d;
+    for (int i = 0; i < 0x50; ++i) d.push_back(static_cast<uint8_t>(i));
+    f.flash.load(0, d);
+    f.cmd(READ, 0x25); // raw physical address, aligned down to 0x20
+    CHECK(((f.r(kSrCnt) >> 16) & 7) == 0);
+    for (uint32_t i = 0; i < 8; ++i) {
+        uint32_t b = 0x20 + 4 * i;
+        CHECK(f.r(kReadData) == (b | (b + 1) << 8 | (b + 2) << 16 | (b + 3) << 24));
+        CHECK(((f.r(kSrCnt) >> 16) & 7) == (i + 1) % 8);
+    }
+    CHECK(f.r(kReadData) == 0x23222120); // pointer wrapped
+    f.cmd(READ, 0x40);
+    CHECK(((f.r(kSrCnt) >> 16) & 7) == 0);
+    CHECK(f.r(kReadData) == 0x43424140);
+    CHECK(f.r(kReadData) == 0x47464544);
+    CHECK(f.r(kReadData) == 0x4B4A4948);
+    CHECK(f.r(kReadData) == 0x4F4E4D4C);
+    CHECK(f.r(kReadData) == 0xFFFFFFFF);
+}
+
+TEST_CASE("rdsr and wrsr without wren") {
+    Fixture f;
+    CHECK(f.r(kSrCnt) == 7u << 19);
+    f.w(kSrCnt, 0xABu << 22 | 0x3FFFFF);
+    CHECK(f.r(kSrCnt) == (0xABu << 22 | 7u << 19));
+    f.w(kConf, kCrcEn | 0xA5C3u << 10);
+    CHECK(f.r(kConf) == (kCrcEn | 0xA5C3u << 10));
+    f.cmd(WRSR); // wp set, no WREN
+    CHECK(f.rdsr() == 0xC0);
+    CHECK(f.r(kSrCnt) == (0xC0 | 7u << 19 | 0xABu << 22));
+    f.cmd(RDSR2);
+    CHECK(f.r(kSrCnt) == (7u << 19 | 0xABu << 22)); // WRSR leaves sr2 alone
+    f.wrsr(WRSR2, 0x5A43);
+    CHECK(f.rdsr() == 0x40);
+    f.cmd(RDSR2);
+    CHECK((f.r(kSrCnt) & 0xFFFF) == 0x5A);
+    CHECK(f.out.str().empty());
+}
+
+TEST_CASE("explicit wren consumed") {
+    Fixture f;
+    CHECK(f.rdsr() == 0);
+    f.cmd(WREN);
+    CHECK(f.rdsr() == 0x02);
+    f.cmd(WRDI);
+    CHECK(f.rdsr() == 0);
+    f.cmd(WREN);
+    f.cmd(SE, 0x1000);
+    CHECK(f.rdsr() == 0);
+    f.cmd(WREN);
+    f.cmd(PP, 0);
+    CHECK(f.rdsr() == 0);
+    f.cmd(WREN);
+    f.wrsr(WRSR, 0x40);
+    CHECK(f.rdsr() == 0x40);
+    f.cmd(WREN);
+    f.cmd(CE);
+    CHECK(f.rdsr() == 0x40);
+}
+
+TEST_CASE("wp not released ignores write") {
+    Fixture f;
+    f.flash.load(0x1000 - 0x1000 % 34, std::vector<uint8_t>(0x200, 0));
+    std::vector<uint8_t> before = f.flash.raw();
+    f.inv.clear();
+    f.cmd(WREN);
+    f.cmd(SE, 0x1234, false);
+    CHECK(f.out.str() == "WARNING emulator.flash: flash SE at 0x001234 ignored: WP# not released "
+                         "(operate_sw.wp = 0)\n");
+    CHECK(f.flash.raw() == before);
+    CHECK(f.rdsr() == 0x02);
+    f.w(kWriteData, 0);
+    f.cmd(PP, 0x40, false);
+    CHECK(f.count("WARNING emulator.flash: flash PP at 0x000040 ignored: WP# not released "
+                  "(operate_sw.wp = 0)\n") == 1);
+    f.cmd(PP, 0x40, false);
+    CHECK(f.count("flash PP at 0x000040 ignored: WP# not released") == 2);
+    f.w(kConf, kCrcEn | 0x1Cu << 10);
+    f.cmd(WRSR, 0, false);
+    f.cmd(WRSR2, 0, false);
+    f.cmd(BE1, 0, false);
+    f.cmd(BE2, 0, false);
+    f.cmd(CE, 0, false);
+    for (const char *n : {"WRSR", "WRSR2", "BE1", "BE2", "CE"})
+        CHECK(f.count(std::string("flash ") + n + " at 0x000000 ignored: WP# not released") == 1);
+    CHECK(f.rdsr() == 0x02);
+    CHECK(f.flash.raw() == before);
+    CHECK(f.inv.empty());
+    // The write FIFO was left alone: the word is still there for a released PP.
+    f.cmd(PP, 0x40);
+    std::vector<uint8_t> raw = f.flash.raw();
+    CHECK(raw[0x40] == 0);
+    CHECK(raw[0x43] == 0);
+    CHECK(raw[0x44] == 0xFF);
+}
+
+TEST_CASE("pp clears bits only") {
+    Fixture f;
+    f.flash.load(0, std::vector<uint8_t>(34, 0xF0));
+    for (int i = 0; i < 8; ++i) f.w(kWriteData, 0x3C3C3C3C);
+    f.cmd(PP, 0);
+    std::vector<uint8_t> raw = f.flash.raw();
+    for (int i = 0; i < 32; ++i) CHECK(raw[i] == 0x30);
+    CHECK(raw[32] == 0xF0); // CRC bytes are outside the 32 programmed bytes
+    CHECK(raw[33] == 0xF0);
+    // The FIFO was cleared: an empty FIFO programs all ones, changing nothing.
+    f.cmd(PP, 0);
+    CHECK(f.flash.raw() == raw);
+    f.w(kWriteData, 0x12345678);
+    f.cmd(PP, 0x47); // aligned down to 0x40
+    raw = f.flash.raw();
+    CHECK(raw[0x40] == 0x78);
+    CHECK(raw[0x41] == 0x56);
+    CHECK(raw[0x42] == 0x34);
+    CHECK(raw[0x43] == 0x12);
+    CHECK(raw[0x44] == 0xFF);
+    CHECK(raw[0x5F] == 0xFF);
+    CHECK(raw[0x60] == 0xFF);
+    CHECK(f.out.str().empty());
+}
+
+TEST_CASE("write fifo keeps the last 8 words and pads with ones") {
+    Fixture f;
+    f.flash.load(0, std::vector<uint8_t>(0x80, 0xFF));
+    for (uint32_t i = 1; i <= 10; ++i) f.w(kWriteData, i * 0x01010101u);
+    f.cmd(PP, 0);
+    std::vector<uint8_t> raw = f.flash.raw();
+    for (uint32_t i = 0; i < 32; ++i) CHECK(raw[i] == 3 + i / 4);
+    for (uint32_t v : {0xA1A2A3A4u, 0xB1B2B3B4u, 0xC1C2C3C4u}) f.w(kWriteData, v);
+    f.cmd(PP, 0x20);
+    raw = f.flash.raw();
+    CHECK(raw[0x20] == 0xA4);
+    CHECK(raw[0x23] == 0xA1);
+    CHECK(raw[0x24] == 0xB4);
+    CHECK(raw[0x28] == 0xC4);
+    CHECK(raw[0x2B] == 0xC1);
+    for (int i = 0x2C; i < 0x40; ++i) CHECK(raw[i] == 0xFF);
+}
+
+TEST_CASE("pp clips to the flash size") {
+    Fixture f(100);
+    f.flash.load(0, std::vector<uint8_t>(100, 0xFF));
+    f.inv.clear();
+    for (int i = 0; i < 8; ++i) f.w(kWriteData, 0);
+    f.cmd(PP, 0x63); // aligned to 0x60; only 0x60..0x63 exist
+    std::vector<uint8_t> raw = f.flash.raw();
+    REQUIRE(raw.size() == 100);
+    for (int i = 0; i < 0x60; ++i) CHECK(raw[i] == 0xFF);
+    for (int i = 0x60; i < 100; ++i) CHECK(raw[i] == 0);
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 64, 32}
+    });
+    f.inv.clear();
+    f.w(kWriteData, 0);
+    f.cmd(PP, 0x80); // entirely past the end
+    CHECK(f.flash.raw() == raw);
+    CHECK(f.inv.empty());
+    CHECK(f.rdsr() == 0);
+    CHECK(f.out.str().empty());
+}
+
+TEST_CASE("size not a multiple of 34") {
+    Fixture f(100); // 2 blocks, 32 trailing bytes
+    CHECK(f.flash.ranges()[0].size == 4096);
+    CHECK(f.flash.demand_ranges()[0].size == 4096);
+    CHECK_NOTHROW(f.flash.check_load(68, 32));
+    CHECK_THROWS_WITH_AS(f.flash.check_load(68, 33),
+                         "flash load of 33 bytes at 0x44 does not fit the 100 byte flash",
+                         std::invalid_argument);
+    f.flash.load(0, cat(cat(block(0x00), block(0x40)), std::vector<uint8_t>(32, 0x11)));
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, 4096}
+    });
+    CHECK(f.flash.read("xip", 60, 4) == 0x5F5E5D5C);
+    f.w(kConf, 0);
+    auto e = f.xip_fault(64);
+    REQUIRE(e);
+    CHECK(e->addr == 64);
+    CHECK(f.out.str() == alert("0x00000040", 2, "0x000044"));
+    Page p = f.flash.page("xip", 0);
+    REQUIRE(p.bad.size() == 126);
+    CHECK(p.bad[0].start == 64);
+    CHECK(p.data[64] == 0);
+    CHECK(p.data[63] == 0x5F);
+    f.cmd(READ, 0x60);
+    CHECK(f.r(kReadData) == 0x11111111);
+    CHECK(f.r(kReadData) == 0xFFFFFFFF);
+}
+
+TEST_CASE("xip read past blocks always faults") {
+    Fixture f;
+    f.w(kConf, 0);
+    CHECK(f.flash.read("xip", 0x1E1DFC, 4) == 0xFFFFFFFF);
+    auto e = f.xip_fault(0x1E1E00);
+    REQUIRE(e);
+    CHECK(e->kind == Fault::Kind::Dabt);
+    CHECK(e->addr == 0x1E1E00);
+    CHECK(f.out.str() == alert("0x001E1E00", 61680, "0x1FFFE0"));
+    REQUIRE(f.xip_fault(0x1E1FFC));
+    CHECK(f.count(alert("0x001E1FFC", 61695, "0x2001FA")) == 1);
+    Page p = f.flash.page("xip", 0x1E1000);
+    REQUIRE(p.bad.size() == 16);
+    CHECK(p.bad[0].start == 0xE00);
+    CHECK(p.bad[0].end == 0xE20);
+    CHECK(p.bad[15].start == 0xFE0);
+    CHECK(p.bad[15].end == 0x1000);
+    CHECK(p.data[0xDFF] == 0xFF);
+    CHECK(p.data[0xE00] == 0);
+}
+
+TEST_CASE("load forgets verdicts of whole blocks only") {
+    Fixture f;
+    f.flash.load(0, cat(block(0x00), block(0x40)));
+    CHECK(f.flash.read("xip", 0, 4) == 0x03020100); // verdict cached: good
+    CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
+    // A partial block keeps its cached verdict although its CRC no longer matches.
+    f.flash.load(0, std::vector<uint8_t>(20, 0xEE));
+    CHECK(f.flash.read("xip", 0, 4) == 0xEEEEEEEE);
+    // Covering block 1 completely forgets its verdict.
+    f.flash.load(34, cat(std::vector<uint8_t>(32, 0x77), {0, 0}));
+    CHECK(f.xip_fault(32));
+    CHECK(f.flash.read("xip", 16, 4) == 0xEEEEEEEE);
+}
+
+TEST_CASE("erase sector 4 KiB, block 32/64 KiB, chip") {
+    Fixture f;
+    f.flash.load(0, std::vector<uint8_t>(0x200000, 0));
+    f.cmd(SE, 0x1234);
+    std::vector<uint8_t> raw = f.flash.raw();
+    CHECK(raw[0xFFF] == 0);
+    CHECK(raw[0x1000] == 0xFF);
+    CHECK(raw[0x1FFF] == 0xFF);
+    CHECK(raw[0x2000] == 0);
+    f.cmd(BE1, 0x9ABC);
+    raw = f.flash.raw();
+    CHECK(raw[0x7FFF] == 0);
+    CHECK(raw[0x8000] == 0xFF);
+    CHECK(raw[0xFFFF] == 0xFF);
+    CHECK(raw[0x10000] == 0);
+    f.cmd(BE2, 0x2ABCD);
+    raw = f.flash.raw();
+    CHECK(raw[0x1FFFF] == 0);
+    CHECK(raw[0x20000] == 0xFF);
+    CHECK(raw[0x2FFFF] == 0xFF);
+    CHECK(raw[0x30000] == 0);
+    size_t erased = 0;
+    for (uint8_t b : raw) erased += b == 0xFF;
+    CHECK(erased == 0x1000 + 0x8000 + 0x10000);
+    f.cmd(CE);
+    CHECK(f.flash.raw() == std::vector<uint8_t>(0x200000, 0xFF));
+    CHECK(f.out.str().empty());
+
+    Fixture g(0x1800); // a sector clipped by the flash size
+    g.flash.load(0, std::vector<uint8_t>(0x1800, 0));
+    g.cmd(SE, 0x1700);
+    raw = g.flash.raw();
+    REQUIRE(raw.size() == 0x1800);
+    CHECK(raw[0xFFF] == 0);
+    for (size_t i = 0x1000; i < 0x1800; ++i) CHECK(raw[i] == 0xFF);
+    g.cmd(SE, 0x2000); // entirely past the end
+    CHECK(g.flash.raw() == raw);
+}
+
+TEST_CASE("bp bits suppress pp and ignore erase, wrsr allowed") {
+    Fixture f;
+    f.flash.load(0, std::vector<uint8_t>(0x2000, 0));
+    std::vector<uint8_t> before = f.flash.raw();
+    f.inv.clear();
+    f.wrsr(WRSR, 0x1C);
+    CHECK(f.rdsr() == 0x1C);
+    f.cmd(WREN);
+    f.w(kWriteData, 0x12345678);
+    f.cmd(PP, 0x2040);
+    CHECK(f.out.str() == "WARNING emulator.flash: flash PP at 0x002040 suppressed: block protection is set in "
+                         "the status register\n");
+    CHECK(f.rdsr() == 0x1E); // WEL not consumed
+    for (uint32_t op : {SE, BE1, BE2, CE}) f.cmd(op, 0x1000);
+    for (const char *n : {"SE", "BE1", "BE2", "CE"})
+        CHECK(f.count(std::string("WARNING emulator.flash: flash ") + n +
+                      " at 0x001000 ignored: block protection is set in the status register\n") == 1);
+    CHECK(f.rdsr() == 0x1C); // the first erase consumed WEL
+    CHECK(f.flash.raw() == before);
+    CHECK(f.inv.empty());
+    f.cmd(WREN);
+    f.wrsr(WRSR2, 0x0400); // status write allowed while protected; consumes WEL
+    CHECK(f.rdsr() == 0);
+    f.cmd(RDSR2);
+    CHECK((f.r(kSrCnt) & 0xFF) == 0x04);
+    // Unprotected now: the FIFO word kept by the suppressed PP is programmed.
+    f.cmd(PP, 0x2040);
+    f.cmd(SE, 0x1000);
+    std::vector<uint8_t> raw = f.flash.raw();
+    CHECK(raw[0x2040] == 0x78);
+    CHECK(raw[0x2043] == 0x12);
+    CHECK(raw[0x2044] == 0xFF);
+    CHECK(raw[0xFFF] == 0);
+    CHECK(raw[0x1000] == 0xFF);
+    CHECK(f.count("WARNING") == 5);
+}
+
+TEST_CASE("erase invalidates xip") {
+    Fixture f;
+    f.flash.load(121 * 34, block(0x10));
+    f.inv.clear();
+    CHECK(f.flash.read("xip", 121 * 32, 4) == 0x13121110); // verdict cached
+    f.cmd(SE, 0x1000);
+    // Raw 0x1000..0x1FFF touches blocks 120..240 -> logical 120*32 .. 241*32.
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 3840, 3872}
+    });
+    CHECK(f.xip_fault(121 * 32)); // verdict forgotten, block is now erased
+    f.inv.clear();
+    f.cmd(PP, 0x40); // raw 0x40..0x5F: blocks 1..2
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 32, 64}
+    });
+    f.inv.clear();
+    f.cmd(CE); // all blocks including the trailing partial one
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, 61681 * 32}
+    });
+    f.inv.clear();
+    f.cmd(BE2, 0x1F0000); // clipped at the end of the flash
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0x1F0000 / 34 * 32, (61681 - 0x1F0000 / 34) * 32}
+    });
+}
+
+TEST_CASE("crc_en toggling invalidates the window") {
+    Fixture f;
+    f.w(kConf, kCrcEn | 0x55u << 10);
+    CHECK(f.inv.empty());
+    f.w(kConf, 0x55u << 10);
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, kWindow2M}
+    });
+    f.w(kConf, 0);
+    CHECK(f.inv.size() == 1);
+    f.w(kConf, kCrcEn);
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, kWindow2M},
+                       {"xip", 0, kWindow2M}
+    });
+    f.inv.clear();
+    f.flash.reset();
+    CHECK(f.inv.empty()); // crc_en unchanged by reset
+    f.w(kConf, 0);
+    f.inv.clear();
+    f.flash.reset();
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, kWindow2M}
+    });
+    CHECK(f.r(kConf) == kCrcEn);
+}
+
+TEST_CASE("reset keeps contents") {
+    Fixture f;
+    f.flash.load(0, cat(block(0x00), block(0x40)));
+    f.wrsr(WRSR2, 0x2040);
+    f.cmd(WREN);
+    f.w(kSrCnt, 0x12u << 22);
+    f.w(kWriteData, 0);
+    f.w(kConf, 0x77u << 10);
+    f.cmd(READ, 0);
+    CHECK(f.r(kReadData) == 0x03020100);
+    std::vector<uint8_t> before = f.flash.raw();
+    f.inv.clear();
+
+    f.flash.reset();
+    CHECK(f.flash.raw() == before);
+    CHECK(f.inv == std::vector<Call>{
+                       {"xip", 0, kWindow2M}
+    });
+    CHECK(f.r(kOperate) == 0);
+    CHECK(f.r(kConf) == kCrcEn);
+    CHECK(f.r(kSrCnt) == 7u << 19);
+    CHECK(f.r(kReadData) == 0); // read FIFO emptied
+    CHECK(((f.r(kSrCnt) >> 16) & 7) == 1);
+    CHECK(f.rdsr() == 0);
+    f.cmd(RDSR2);
+    CHECK((f.r(kSrCnt) & 0xFF) == 0);
+    f.cmd(PP, 0x40); // write FIFO emptied: programs all ones
+    CHECK(f.flash.raw() == before);
+    CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
+}
+
+TEST_CASE("load rejects data larger than the flash") {
+    Fixture f;
+    CHECK_THROWS_AS(f.flash.check_load(0, UINT32_MAX), std::invalid_argument);
+    CHECK_THROWS_AS(f.flash.check_load(0x22, UINT32_MAX), std::invalid_argument);
+    std::vector<uint8_t> over(0x200001, 0x55);
+    CHECK_THROWS_AS(f.flash.load(0, over), std::invalid_argument);
+    // A size beyond 32 bits is rejected before the buffer is touched.
+    const uint8_t            b = 0;
+    std::span<const uint8_t> huge(&b, (size_t{1} << 32) + 4);
+    CHECK_THROWS_AS(f.flash.load(0, huge), std::invalid_argument);
+    CHECK(f.flash.raw() == std::vector<uint8_t>(0x200000, 0xFF));
+}

@@ -1,0 +1,102 @@
+# BK7252: memory map and the devices needed to boot a firmware image.
+# Modules that take interrupt lines or signals from another module are listed
+# after it.
+
+name = "BK7252"
+insns_per_us = 100
+peripheral_window = [0x00800000, 0x00100000]
+
+[[memory]]
+name = "TCM"
+base = 0x003F8000
+size = 0x8000
+reset_fill = 0xAA
+
+[[memory]]
+name = "RAM1"
+base = 0x00400000
+size = 0x40000
+reset_fill = 0xAA
+executable = false
+
+[[memory]]
+name = "RAM2"
+base = 0x00900000
+size = 0x40000
+reset_fill = 0xAA
+
+[alias]
+RAM = 0x00400000
+IRAM = 0x00900000
+
+[alias.bootloader]
+module = "FLASH"
+offset = 0x00000000
+
+[alias.app]
+module = "FLASH"
+offset = 0x00011000
+
+[[module]]
+type = "flash"
+name = "FLASH"
+[module.bases]
+xip = 0x00000000
+ctrl = 0x00803000
+[module.params]
+size = 0x200000
+
+[[module]]
+type = "intc"
+name = "ICU"
+[module.bases]
+regs = 0x00802000
+[module.params]
+reset_words = { "0x08" = 0x00ffffff }   # peripheral clocks powered down at reset
+signals = { arm_wdt_pwd = [0x08, 8] }   # register 0x08, bit 8: watchdog clock off
+
+[[module]]
+type = "wdt"
+name = "WDT"
+[module.bases]
+regs = 0x00802900
+[module.params]
+clock_off_signal = "ICU.arm_wdt_pwd"
+
+[[module]]
+type = "timer"
+name = "TIMER0"
+[module.bases]
+regs = 0x00802A00
+[module.params]
+intc = "ICU"
+irq = 8
+hz = 26000000
+
+[[module]]
+type = "timer"
+name = "TIMER1"
+[module.bases]
+regs = 0x00802A40
+[module.params]
+intc = "ICU"
+irq = 8
+hz = 32000
+
+[[module]]
+type = "uart"
+name = "UART1"
+[module.bases]
+regs = 0x00802100
+[module.params]
+intc = "ICU"
+irq = 0
+
+[[module]]
+type = "uart"
+name = "UART2"
+[module.bases]
+regs = 0x00802200
+[module.params]
+intc = "ICU"
+irq = 1

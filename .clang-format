@@ -1,0 +1,45 @@
+# K&R braces (opening brace on the same line as the control statement).
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+SortIncludes: Never
+IndentCaseLabels: true
+BreakStringLiterals: false
+ColumnLimit: 120
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+AlignArrayOfStructures: Left
+BinPackArguments: false
+BinPackParameters: false
+
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  AfterUnion: false
+  BeforeCatch: false
+  BeforeElse: false
+BreakBeforeBraces: Custom
+AlignConsecutiveAssignments:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignConsecutiveDeclarations:
+  Enabled: true
+  AcrossEmptyLines: false
+  AcrossComments: false
+AlignTrailingComments:
+  Kind: Always
+  OverEmptyLines: 0
+MaxEmptyLinesToKeep: 2
+AlignEscapedNewlines: Left
+BitFieldColonSpacing: After
