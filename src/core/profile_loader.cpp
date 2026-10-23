@@ -97,6 +97,14 @@ ParamValue param(const toml::node &n, const std::string &where) {
     if (n.is_boolean()) return static_cast<int64_t>(n.as_boolean()->get() ? 1 : 0);
     if (n.is_table()) return params(*n.as_table(), where);
     if (const toml::array *arr = n.as_array()) {
+        if (!arr->empty() && arr->front().is_table()) {
+            ParamTableList tables;
+            for (const toml::node &el : *arr) {
+                if (!el.is_table()) throw Bad{where + " must be a list of tables"};
+                tables.push_back(params(*el.as_table(), where));
+            }
+            return tables;
+        }
         ParamList list;
         for (const toml::node &el : *arr) {
             if (!el.is_integer()) throw Bad{where + " must be a list of integers"};

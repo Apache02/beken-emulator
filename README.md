@@ -40,9 +40,14 @@ UART2: /dev/pts/M
 ```
 
 UART2 carries the bootloader's console; open it with any terminal program or
-pass its path to `bkloader --port`. `--uart1`/`--uart2 stdio` connects a UART
-to the emulator's own standard input and output instead; `-d LIST` enables
-debug logging. The emulator runs until it receives SIGINT or SIGTERM.
+pass its path to `bkloader --port`. `--uart NAME=stdio` connects the UART
+module `NAME` of the profile to the emulator's own standard input and output
+instead (`--uart1 stdio` and `--uart2 stdio` are shorthands for `UART1` and
+`UART2`; the terminal is put in raw mode, and Ctrl-C stops the emulator instead of
+reaching the firmware); `--uart NAME=/dev/ttyUSB0` connects it to a real serial port at
+115200 baud instead; `--i2c NAME=TYPE[@ADDRESS]` attaches a device (for example `hi704`)
+to the I2C controller module `NAME` (`--i2c1 TYPE` is the shorthand for
+`I2C1`); `-d LIST` enables debug logging. The emulator runs until it receives SIGINT or SIGTERM.
 
 ### Known limitation: start the host tool after the app banner
 

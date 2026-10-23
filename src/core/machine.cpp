@@ -55,7 +55,21 @@ void Machine::add_module(const ModuleSpec &spec, const ModuleRegistry &registry,
     }
     if (by_name_.count(spec.name)) throw std::invalid_argument("module " + spec.name + " is listed twice");
 
-    ModuleContext ctx{spec.name, spec.params, scheduler_, cpu_irq_, cpu_fiq_, [this] { reset(); }, {}, {}, {}, nullptr};
+    ModuleContext ctx{spec.name,
+                      spec.params,
+                      scheduler_,
+                      cpu_irq_,
+                      cpu_fiq_,
+                      [this] { reset(); },
+                      {},
+                      {},
+                      {},
+                      nullptr,
+                      nullptr,
+                      {},
+                      {}};
+    ctx.cpu_instruction = [this] { return cpu_.instruction(); };
+    ctx.memory          = &bus_.memory();
     if (auto e = endpoints.find(spec.name); e != endpoints.end()) ctx.endpoint = e->second;
 
     if (const ParamValue *intc = ctx.params.find("intc")) {
@@ -73,6 +87,17 @@ void Machine::add_module(const ModuleSpec &spec, const ModuleRegistry &registry,
         ctx.params.erase("irq");
     } else if (ctx.params.find("irq")) {
         throw std::invalid_argument("module " + spec.name + " has irq but no intc");
+    }
+
+    if (const ParamValue *dma = ctx.params.find("dma")) {
+        if (!dma->string()) throw std::invalid_argument("module " + spec.name + ": dma must be a module name");
+        Module           &engine  = earlier(spec.name, *dma->string());
+        const ParamValue *request = ctx.params.find("dma_request");
+        if (!request || !request->integer() || *request->integer() < 0 || *request->integer() > 15)
+            throw std::invalid_argument("module " + spec.name + ": dma needs dma_request 0-15");
+        ctx.dma = engine.request_line(static_cast<unsigned>(*request->integer()));
+        ctx.params.erase("dma");
+        ctx.params.erase("dma_request");
     }
 
     std::vector<std::string> signal_keys;

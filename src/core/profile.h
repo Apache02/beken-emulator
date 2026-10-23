@@ -16,7 +16,7 @@ struct ParamValue;
 using ParamList = std::vector<int64_t>;
 
 // Free-form module parameters: keys in the order they were given. A value is an
-// integer, a string, a nested table or a list of integers.
+// integer, a string, a nested table, a list of integers or a list of tables.
 struct ParamTable {
     std::vector<std::pair<std::string, ParamValue>> entries;
 
@@ -31,15 +31,19 @@ struct ParamTable {
     bool erase(const std::string &key);
 };
 
-struct ParamValue : std::variant<int64_t, std::string, ParamTable, ParamList> {
-    using std::variant<int64_t, std::string, ParamTable, ParamList>::variant;
+// A list of tables, e.g. `read_adjust = [{ offset = 8, ... }, ...]`.
+using ParamTableList = std::vector<ParamTable>;
+
+struct ParamValue : std::variant<int64_t, std::string, ParamTable, ParamList, ParamTableList> {
+    using std::variant<int64_t, std::string, ParamTable, ParamList, ParamTableList>::variant;
     ParamValue(int v) : variant(static_cast<int64_t>(v)) {}
     ParamValue(const char *v) : variant(std::string(v)) {}
 
-    const int64_t     *integer() const { return std::get_if<int64_t>(this); }
-    const std::string *string() const { return std::get_if<std::string>(this); }
-    const ParamTable  *table() const { return std::get_if<ParamTable>(this); }
-    const ParamList   *list() const { return std::get_if<ParamList>(this); }
+    const int64_t        *integer() const { return std::get_if<int64_t>(this); }
+    const std::string    *string() const { return std::get_if<std::string>(this); }
+    const ParamTable     *table() const { return std::get_if<ParamTable>(this); }
+    const ParamList      *list() const { return std::get_if<ParamList>(this); }
+    const ParamTableList *tables() const { return std::get_if<ParamTableList>(this); }
 };
 
 inline ParamTable::ParamTable(std::initializer_list<std::pair<std::string, ParamValue>> init) {

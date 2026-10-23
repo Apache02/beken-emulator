@@ -203,6 +203,16 @@ std::vector<uint8_t> Cpu::mem_read(uint32_t addr, uint32_t size) {
     return out;
 }
 
+std::optional<Instruction> Cpu::instruction() {
+    const uint32_t pc    = reg(Reg::PC);
+    const unsigned width = thumb() ? 2 : 4;
+    uint8_t        b[4]  = {};
+    if (uc_mem_read(uc_, pc, b, width) != UC_ERR_OK) return std::nullopt;
+    uint32_t opcode = 0;
+    for (unsigned i = 0; i < width; ++i) opcode |= static_cast<uint32_t>(b[i]) << (8 * i);
+    return Instruction{pc, opcode, width};
+}
+
 uint32_t Cpu::reg(Reg r) {
     uint32_t v = 0;
     check(uc_reg_read(uc_, uc_reg_id(r), &v), "register read");

@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -31,6 +32,45 @@ struct BadSpan {
 struct Page {
     std::array<uint8_t, 4096> data;
     std::vector<BadSpan>      bad;
+};
+
+// The instruction the CPU is executing: its address, its opcode and the opcode
+// width in bytes (2 for Thumb, 4 for ARM).
+struct Instruction {
+    uint32_t pc, opcode;
+    unsigned width;
+};
+
+// Thrown by BusMemory when a bus master (a DMA engine) touches an address that
+// nothing readable or writable answers at.
+struct BusError : std::runtime_error {
+    BusError(uint32_t addr, const std::string &reason);
+    uint32_t addr;
+};
+
+// What a bus master can reach: RAM, and demand ranges (flash) read-only.
+// Peripheral registers are not reachable this way. Throws BusError.
+class BusMemory {
+  public:
+    virtual ~BusMemory()                                                             = default;
+    virtual std::vector<uint8_t> read(uint32_t addr, uint32_t size)                  = 0;
+    virtual void                 write(uint32_t addr, std::span<const uint8_t> data) = 0;
+};
+
+// A peripheral's request line into a DMA engine: the peripheral holds the line
+// up while it has a word to give and supplies the word through bind().
+class RequestLine {
+  public:
+    using Source = std::function<std::array<uint8_t, 4>()>;
+
+    void                   set(bool level) { level_ = level; }
+    bool                   level() const { return level_; }
+    void                   bind(Source read) { read_ = std::move(read); }
+    std::array<uint8_t, 4> read() const { return read_(); }
+
+  private:
+    bool   level_ = false;
+    Source read_;
 };
 
 // Interrupt or level line driven by a module: called with the new level.
@@ -92,6 +132,12 @@ class Module {
 
     virtual Signal signal(const std::string &signal_name) {
         throw std::invalid_argument(name() + ": no signal " + signal_name);
+    }
+
+    // DMA engines hand out the request line for request number `n` (a later
+    // call for the same number replaces the earlier line); other modules refuse.
+    virtual std::shared_ptr<RequestLine> request_line(unsigned n) {
+        throw std::invalid_argument(name() + ": not a DMA engine (asked for request line " + std::to_string(n) + ")");
     }
 
     // Interrupt controllers hand out the line driving source `bit`; other

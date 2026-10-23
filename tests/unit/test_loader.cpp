@@ -124,6 +124,40 @@ std::string error_of(Machine &m, const std::vector<LoadSpec> &loads) {
 
 // --- profile file ---------------------------------------------------------
 
+namespace {
+
+// The modules of profiles/BK7252.toml in profile order: (name, type).
+const std::vector<std::pair<const char *, const char *>> kShippedModules = {
+    {"FLASH",    "flash"   },
+    {"SCTRL",    "sctrl"   },
+    {"ICU",      "intc"    },
+    {"WDT",      "wdt"     },
+    {"MDM_STAT", "unknown" },
+    {"MDM_CFG",  "unknown" },
+    {"AGC",      "unknown" },
+    {"MDM_3000", "unknown" },
+    {"AUDIO",    "unknown" },
+    {"SAR_ADC",  "saradc"  },
+    {"AGC_RAM",  "unknown" },
+    {"RC",       "unknown" },
+    {"NX_INTC",  "unknown" },
+    {"NX_DMA",   "unknown" },
+    {"LA",       "unknown" },
+    {"MAC",      "wifi_mac"},
+    {"MAC_PTA",  "unknown" },
+    {"GDMA",     "gdma"    },
+    {"JPEG",     "jpeg"    },
+    {"GPIO",     "gpio"    },
+    {"I2C1",     "i2c1"    },
+    {"TRNG",     "trng"    },
+    {"TIMER0",   "timer"   },
+    {"TIMER1",   "timer"   },
+    {"UART1",    "uart"    },
+    {"UART2",    "uart"    },
+};
+
+} // namespace
+
 TEST_CASE("profile parses minimal bk7252") {
     Profile p = load_profile("BK7252", BK_PROFILES_DIR);
     CHECK(p.name == "BK7252");
@@ -151,30 +185,43 @@ TEST_CASE("profile parses minimal bk7252") {
         names.push_back(m.name);
         types.push_back(m.type);
     }
-    CHECK(names == std::vector<std::string>{"FLASH", "ICU", "WDT", "TIMER0", "TIMER1", "UART1", "UART2"});
-    CHECK(types == std::vector<std::string>{"flash", "intc", "wdt", "timer", "timer", "uart", "uart"});
-    CHECK(p.modules[0].bases == std::map<std::string, uint32_t>{
-                                    {"xip",  0         },
-                                    {"ctrl", 0x00803000}
+    std::vector<std::string> want_names, want_types;
+    for (const auto &[name, type] : kShippedModules) {
+        want_names.push_back(name);
+        want_types.push_back(type);
+    }
+    CHECK(names == want_names);
+    CHECK(types == want_types);
+    auto spec = [&](const std::string &name) -> const ModuleSpec & {
+        for (const auto &m : p.modules) {
+            if (m.name == name) return m;
+        }
+        FAIL("no module " << name);
+        throw std::logic_error("unreachable");
+    };
+    CHECK(spec("FLASH").bases == std::map<std::string, uint32_t>{
+                                     {"xip",  0         },
+                                     {"ctrl", 0x00803000}
     });
-    CHECK(p.modules[1].bases.at("regs") == 0x00802000);
-    CHECK(p.modules[2].bases.at("regs") == 0x00802900);
-    CHECK(p.modules[3].bases.at("regs") == 0x00802A00);
-    CHECK(p.modules[4].bases.at("regs") == 0x00802A40);
-    CHECK(p.modules[5].bases.at("regs") == 0x00802100);
-    CHECK(p.modules[6].bases.at("regs") == 0x00802200);
+    CHECK(spec("SCTRL").bases.at("regs") == 0x00800000);
+    CHECK(spec("ICU").bases.at("regs") == 0x00802000);
+    CHECK(spec("WDT").bases.at("regs") == 0x00802900);
+    CHECK(spec("TIMER0").bases.at("regs") == 0x00802A00);
+    CHECK(spec("TIMER1").bases.at("regs") == 0x00802A40);
+    CHECK(spec("UART1").bases.at("regs") == 0x00802100);
+    CHECK(spec("UART2").bases.at("regs") == 0x00802200);
 
-    const ParamValue *hz = p.modules[4].params.find("hz");
+    const ParamValue *hz = spec("TIMER1").params.find("hz");
     REQUIRE(hz);
     CHECK(*hz->integer() == 32000);
-    const ParamValue *signals = p.modules[1].params.find("signals");
+    const ParamValue *signals = spec("ICU").params.find("signals");
     REQUIRE(signals);
     REQUIRE(signals->table());
     const ParamValue *pwd = signals->table()->find("arm_wdt_pwd");
     REQUIRE(pwd);
     REQUIRE(pwd->list());
     CHECK(*pwd->list() == ParamList{0x08, 8});
-    const ParamValue *words = p.modules[1].params.find("reset_words");
+    const ParamValue *words = spec("ICU").params.find("reset_words");
     REQUIRE(words);
     REQUIRE(words->table());
     REQUIRE(words->table()->find("0x08"));
@@ -193,8 +240,7 @@ TEST_CASE("profile parses minimal bk7252") {
 TEST_CASE("shipped profile builds a machine") {
     Profile p = load_profile("BK7252", BK_PROFILES_DIR);
     Machine m(p, builtin_registry());
-    for (const char *name : {"FLASH", "ICU", "WDT", "TIMER0", "TIMER1", "UART1", "UART2"})
-        CHECK_MESSAGE(m.module(name) != nullptr, name);
+    for (const auto &[name, type] : kShippedModules) CHECK_MESSAGE(m.module(name) != nullptr, name);
     auto regions = m.bus().memory_regions();
     REQUIRE(regions.size() == 3);
     CHECK(regions[0].name == "TCM");
@@ -211,6 +257,46 @@ TEST_CASE("shipped profile builds a machine") {
     CHECK(regions[2].executable);
     // ICU word 0x08 powers the peripheral clocks down at reset.
     CHECK(m.module("ICU")->read("regs", 0x08, 4) == 0x00ffffff);
+    CHECK(m.module("ICU")->read("regs", 0x0c, 4) == 0x0001ffff);
+    CHECK(m.module("ICU")->read("regs", 0x10, 4) == 0x00000003);
+
+    // FLASH: the controller as the vendor ROM leaves it at bootloader entry.
+    Module *flash = m.module("FLASH");
+    CHECK(flash->read("ctrl", 0x1C, 4) == 0x0400000F);
+    CHECK(flash->read("ctrl", 0x14, 4) == 0x28390000); // m_value 0xa0, constant 7, read pointer 1
+    CHECK(flash->read("ctrl", 0x20, 4) == 0x01FFFFFF);
+
+    // SCTRL: identity, measured power-on words, the biased clock divider.
+    Module *sctrl = m.module("SCTRL");
+    CHECK(sctrl->read("regs", 0x00, 4) == 0x0007221a);
+    CHECK(sctrl->read("regs", 0x04, 4) == 0x18221020);
+    CHECK(sctrl->read("regs", 0x08, 4) == 0x00020010); // divider 0 reads as 1
+    CHECK(sctrl->read("regs", 0x118, 4) == 0x0000001f);
+    CHECK(sctrl->read("regs", 0x084, 4) == 0xffe08410);
+    Signal mac_powered = sctrl->signal("mac_powered");
+    CHECK_FALSE(mac_powered());
+    sctrl->write("regs", 0x10c, 4, 0x00010000);
+    CHECK(mac_powered());
+    // GPIO: pins read 0x28 at reset, GPIO 20-23 also have the function bit.
+    Module *gpio = m.module("GPIO");
+    CHECK(gpio->read("regs", 0x00, 4) == 0x28);
+    CHECK(gpio->read("regs", 0x50, 4) == 0x68);
+    CHECK(gpio->read("regs", 0x9C, 4) == 0x02);
+    CHECK(gpio->read("regs", 0xB8, 4) == 0x5500);
+
+    // TRNG counts, SAR ADC is idle, AUDIO holds its start words.
+    Module *trng = m.module("TRNG");
+    CHECK(trng->read("regs", 0x04, 4) == 0);
+    CHECK(trng->read("regs", 0x04, 4) == 1);
+    CHECK(m.module("SAR_ADC")->read("regs", 0x00, 4) == (1u << 30));
+    CHECK(m.module("AUDIO")->read("regs", 0x38, 4) == 0x0000f000);
+    CHECK(m.module("AUDIO")->read("regs", 0x3C, 4) == 0x00001836);
+
+    // A chip reset (watchdog style) keeps the cold words but swaps charge_status.
+    m.reset();
+    CHECK(sctrl->read("regs", 0x084, 4) == 0xffe08010);
+    CHECK(sctrl->read("regs", 0x118, 4) == 0x0000001f);
+    CHECK_FALSE(mac_powered());
 }
 
 TEST_CASE("profile with a small chip") {
@@ -225,6 +311,42 @@ TEST_CASE("profile with a small chip") {
     // Alias names are stored upper case.
     CHECK(p.alias.count("RAM") == 1);
     CHECK(p.alias.count("BOOT") == 1);
+}
+
+TEST_CASE("profile parameter may be a list of tables") {
+    TempDir dir;
+    dir.write("SMALL.toml", std::string(kSmallProfile) + R"(
+[[module]]
+type = "sctrl"
+name = "SCTRL"
+[module.bases]
+regs = 0x00800000
+[module.params]
+read_adjust = [{ offset = 8, shift = 4, width = 4, add = 1 }, { offset = 12, shift = 0, width = 8, add = 2 }]
+none = []
+)");
+    Profile           p = load_profile("SMALL", dir.path);
+    const ParamValue *v = p.modules.at(1).params.find("read_adjust");
+    REQUIRE(v);
+    REQUIRE(v->tables());
+    REQUIRE(v->tables()->size() == 2);
+    CHECK(*v->tables()->at(0).find("offset")->integer() == 8);
+    CHECK(*v->tables()->at(1).find("add")->integer() == 2);
+    // An empty array stays a list of integers.
+    REQUIRE(p.modules.at(1).params.find("none"));
+    CHECK(p.modules.at(1).params.find("none")->list());
+}
+
+TEST_CASE("profile list mixing tables and integers is rejected") {
+    TempDir dir;
+    dir.write("SMALL.toml", std::string(kSmallProfile) + R"(
+[[module]]
+type = "sctrl"
+name = "SCTRL"
+[module.params]
+bad = [{ offset = 8 }, 3]
+)");
+    CHECK_THROWS_AS(load_profile("SMALL", dir.path), ProfileError);
 }
 
 TEST_CASE("profile names are restricted to A-Z, 0-9, underscore and dash") {

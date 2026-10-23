@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -22,7 +23,29 @@ namespace bk {
 // erases. Every command completes instantly.
 class Flash : public Module {
   public:
-    Flash(std::string name, uint32_t size = 0x200000, uint32_t jedec = 0x1C7015);
+    static constexpr uint32_t kCrcEn = 1u << 26;
+
+    // The controller's start state. The defaults are the reset state of the
+    // design; a profile can give the state a running chip is measured in.
+    struct Options {
+        // Reset value of `conf`.
+        uint32_t conf_reset = kCrcEn;
+        // Reset value of the `m_value` field of `sr_data_crc_cnt`.
+        uint32_t m_value_reset = 0;
+        // Reset position (0-7) of the read FIFO pointer, the next word a read of
+        // `data_flash_sw` returns and the field [18:16] of `sr_data_crc_cnt`.
+        uint32_t read_ptr_reset = 0;
+        // Start values of controller words that have no function in the model
+        // (offset -> value): they read back what was written and return to
+        // these at reset. Any other unused offset reads 0 and ignores writes.
+        std::map<uint32_t, uint32_t> words;
+    };
+
+    // Throws std::invalid_argument when `options.words` names an offset that is
+    // not a word-aligned plain offset of the `ctrl` range.
+    Flash(std::string name, uint32_t size, uint32_t jedec, Options options);
+    explicit Flash(std::string name, uint32_t size = 0x200000, uint32_t jedec = 0x1C7015)
+        : Flash(std::move(name), size, jedec, Options{}) {}
 
     std::string        name() const override { return name_; }
     bool               loadable() const override { return true; }
@@ -34,7 +57,7 @@ class Flash : public Module {
     std::vector<Range> ranges() const override {
         return {
             {"xip",  window_},
-            {"ctrl", 0x28   }
+            {"ctrl", 0x28   }, // keep in step with kCtrlSize in flash.cpp
         };
     }
 
@@ -50,8 +73,6 @@ class Flash : public Module {
     std::vector<uint8_t> raw() const { return raw_; }
 
   private:
-    static constexpr uint32_t kCrcEn = 1u << 26;
-
     bool crc_en() const { return (conf_ & kCrcEn) != 0; }
     // Whether XIP block `n` can be read (past the end never; CRC checked if enabled).
     bool readable(uint32_t n);
@@ -74,12 +95,14 @@ class Flash : public Module {
     std::vector<std::optional<bool>> verdicts_;
     std::optional<uint32_t>          last_alert_block_;
 
-    uint32_t                operate_ = 0, conf_ = kCrcEn, m_value_ = 0;
-    uint32_t                sr_ = 0, sr2_ = 0, sr_out_ = 0;
-    bool                    wel_ = false;
-    std::array<uint32_t, 8> read_fifo_{};
-    uint32_t                read_ptr_ = 0;
-    std::deque<uint32_t>    write_fifo_;
+    Options                      options_;
+    std::map<uint32_t, uint32_t> words_; // the plain controller words
+    uint32_t                     operate_ = 0, conf_ = kCrcEn, m_value_ = 0;
+    uint32_t                     sr_ = 0, sr2_ = 0, sr_out_ = 0;
+    bool                         wel_ = false;
+    std::array<uint32_t, 8>      read_fifo_{};
+    uint32_t                     read_ptr_ = 0; // set from options_ at construction and reset
+    std::deque<uint32_t>         write_fifo_;
 };
 
 } // namespace bk

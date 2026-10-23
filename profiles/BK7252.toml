@@ -45,6 +45,50 @@ xip = 0x00000000
 ctrl = 0x00803000
 [module.params]
 size = 0x200000
+# The controller as the vendor ROM leaves it at bootloader entry (measured).
+conf_reset = 0x0400000f       # conf: crc_en and clk_conf = 15
+m_value_reset = 0xa0          # the quad-mode M byte
+read_ptr_reset = 1            # the ROM has read from the FIFO: pointer at 1
+[module.params.reset_words]
+"0x20" = 0x01ffffff           # an unused word that reads non-zero on the chip
+
+[[module]]
+type = "sctrl"
+name = "SCTRL"
+[module.bases]
+regs = 0x00800000
+[module.params]
+chip_id = 0x0007221a
+device_id = 0x18221020
+# Emulation hack: the firmware's busy-wait loops count iterations from the main
+# clock divider (control[7:4], clock = source / (divider + 1)) and run several
+# times slower here than on the chip. Reading the divider one higher makes them
+# count fewer iterations.
+read_adjust = [{ offset = 0x008, shift = 4, width = 4, add = 1 }]
+# Register fields other modules watch. power_mac_modem: the upper half is the MAC
+# key (1 powers the MAC up, 0xD802 powers it down).
+signals = { mac_powered = { offset = 0x10c, shift = 16, width = 16, equals = 1 } }
+[module.params.reset_words]
+"0x008" = 0x00020000  # control: DCO main clock, qspi_io_volt = 2
+"0x00c" = 0x000001ff  # clk_gating: MAC clocks gated off
+"0x010" = 0x00000028  # reset: tl410_boot, tl410_ext_wait
+"0x01c" = 0x00000207  # flash_delay
+"0x040" = 0x3c000000  # analog_spi: idle, freq_div = 60
+"0x058" = 0x61105b57  # analog_ctrl0..6: calibration preloaded by the vendor ROM
+"0x05c" = 0x68c03102
+"0x060" = 0x84036080
+"0x064" = 0x180004a0
+"0x068" = 0x84200a52
+"0x06c" = 0x3b13b13b
+"0x070" = 0x00b09350
+"0x084" = 0xffe08410  # charge_status after a cold power-on
+"0x104" = 0x00a60000  # sleep
+"0x108" = 0x00000040  # digital_vdd
+"0x118" = 0x0000001f  # pmu_status: USB, DSP, modem, MAC powered down
+"0x12c" = 0x00000147  # block_enable
+"0x134" = 0x00000030  # rosc_cal
+[module.params.warm_reset_words]
+"0x084" = 0xffe08010  # charge_status after a watchdog reset
 
 [[module]]
 type = "intc"
@@ -52,8 +96,12 @@ name = "ICU"
 [module.bases]
 regs = 0x00802000
 [module.params]
-reset_words = { "0x08" = 0x00ffffff }   # peripheral clocks powered down at reset
-signals = { arm_wdt_pwd = [0x08, 8] }   # register 0x08, bit 8: watchdog clock off
+[module.params.reset_words]
+"0x08" = 0x00ffffff   # peri_clk_pwd: every peripheral clock powered down
+"0x0c" = 0x0001ffff   # peri_clk_gate_disable: all clock gates disabled
+"0x10" = 0x00000003   # tl410_clk_pwd: TL410 and BLE clocked off
+[module.params.signals]
+arm_wdt_pwd = [0x08, 8]   # register 0x08, bit 8: watchdog clock off
 
 [[module]]
 type = "wdt"
@@ -62,6 +110,201 @@ name = "WDT"
 regs = 0x00802900
 [module.params]
 clock_off_signal = "ICU.arm_wdt_pwd"
+
+# Stand-ins for blocks that are not emulated yet: plain memory of `size` bytes
+# that reads back what was written and logs every access, so a firmware that
+# initialises them runs and the log shows which stand-ins it uses. The WiFi
+# blocks are listed first. `reset_words` gives start values (what a running
+# chip reads there).
+[[module]]
+type = "unknown"
+name = "MDM_STAT"
+[module.bases]
+regs = 0x01000000
+[module.params]
+size = 108
+
+[[module]]
+type = "unknown"
+name = "MDM_CFG"
+[module.bases]
+regs = 0x01000800
+[module.params]
+size = 152
+
+[[module]]
+type = "unknown"
+name = "AGC"
+[module.bases]
+regs = 0x01002000
+[module.params]
+size = 176
+
+[[module]]
+type = "unknown"
+name = "MDM_3000"
+[module.bases]
+regs = 0x01003000
+[module.params]
+size = 0x100
+[module.params.reset_words]
+"0x00" = 0x00274c10
+"0x08" = 0x00010022
+"0x0c" = 0x00006236
+"0x10" = 0x00006236
+"0x14" = 0x00005555
+"0x18" = 0x0000192a
+"0x1c" = 0x00000030
+"0x20" = 0x0fff0001
+"0x24" = 0x00381205
+
+[[module]]
+type = "unknown"
+name = "AUDIO"
+[module.bases]
+regs = 0x00802B00
+[module.params]
+size = 192
+[module.params.reset_words]
+"0x38" = 0x0000f000
+"0x3C" = 0x00001836
+
+# No analog input: every sample reads `sample`. The interrupt is ICU source 11.
+[[module]]
+type = "saradc"
+name = "SAR_ADC"
+[module.bases]
+regs = 0x00802C00
+[module.params]
+intc = "ICU"
+irq = 11
+sample = 330
+
+# More WiFi stand-ins: AGC microcode RAM and RF control (the transceiver SPI
+# shim's busy bit is a plain register, so its writes complete at once).
+[[module]]
+type = "unknown"
+name = "AGC_RAM"
+[module.bases]
+regs = 0x0100A000
+[module.params]
+size = 2048
+
+[[module]]
+type = "unknown"
+name = "RC"
+[module.bases]
+regs = 0x01050000
+[module.params]
+size = 480
+
+[[module]]
+type = "unknown"
+name = "NX_INTC"
+[module.bases]
+regs = 0x10910000
+[module.params]
+size = 68
+
+[[module]]
+type = "unknown"
+name = "NX_DMA"
+[module.bases]
+regs = 0x10A00000
+[module.params]
+size = 196
+
+[[module]]
+type = "unknown"
+name = "LA"
+[module.bases]
+regs = 0x10E00000
+[module.params]
+size = 64
+
+# Only the monotonic counters are emulated so far; the rest of the MAC
+# registers are stand-ins. The counters run while SCTRL's MAC power key is set.
+[[module]]
+type = "wifi_mac"
+name = "MAC"
+[module.bases]
+core = 0xC0000000
+pl = 0xC0008000
+[module.params]
+mac_powered_signal = "SCTRL.mac_powered"
+
+[[module]]
+type = "unknown"
+name = "MAC_PTA"
+[module.bases]
+regs = 0xC0010000
+[module.params]
+size = 40
+
+# bus_hz: the clock the transfer times were measured at.
+[[module]]
+type = "gdma"
+name = "GDMA"
+[module.bases]
+regs = 0x00809000
+[module.params]
+intc = "ICU"
+irq = 15
+bus_hz = 120000000
+
+# No sensor: a built-in picture is "captured" every frame_interval_ms and its
+# frame ends encode_ms later. The interrupt is FIQ source 29; dma_request 8 is
+# the GDMA's JPEG line.
+[[module]]
+type = "jpeg"
+name = "JPEG"
+[module.bases]
+regs = 0x0080A000
+[module.params]
+intc = "ICU"
+irq = 29
+dma = "GDMA"
+dma_request = 8
+frame_interval_ms = 1000
+encode_ms = 150
+
+# Pin words read 0x28 at reset (output driver off, pull-down); GPIO 20-23 also
+# have function_enable set by the vendor ROM.
+[[module]]
+type = "gpio"
+name = "GPIO"
+[module.bases]
+regs = 0x00802800
+[module.params]
+intc = "ICU"
+irq = 7
+pin_reset = 0x28
+[module.params.reset_words]
+"0x050" = 0x68  # GPIO20
+"0x054" = 0x68  # GPIO21
+"0x058" = 0x68  # GPIO22
+"0x05c" = 0x68  # GPIO23
+"0x09c" = 0x02  # detect: is_usb_plug_in
+"0x0b8" = 0x5500  # func_mux_2: GPIO 20-23 in peripheral mode 2
+
+# I2C1 on GPIO20/21. Devices on the bus are chosen on the command line.
+# ref_hz: the clock source the bus divider divides (26 MHz crystal).
+[[module]]
+type = "i2c1"
+name = "I2C1"
+[module.bases]
+regs = 0x00802300
+[module.params]
+intc = "ICU"
+irq = 2
+ref_hz = 26000000
+
+# Not random: data reads count 0, 1, 2, ... and the generator starts enabled.
+[[module]]
+type = "trng"
+name = "TRNG"
+[module.bases]
+regs = 0x00802480
 
 [[module]]
 type = "timer"

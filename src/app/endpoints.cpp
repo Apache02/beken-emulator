@@ -97,8 +97,13 @@ class StdioEndpoint : public ByteEndpoint {
         if (::isatty(in_) && ::tcgetattr(in_, &saved) == 0) {
             termios raw = saved;
             ::cfmakeraw(&raw);
-            raw.c_cc[VMIN]         = 1;
-            raw.c_cc[VTIME]        = 0;
+            raw.c_cc[VMIN]  = 1;
+            raw.c_cc[VTIME] = 0;
+            // Ctrl-C stays the way out: it raises SIGINT instead of reaching the firmware. Ctrl-Z
+            // and Ctrl-\ are passed to the firmware, so the terminal is never left in raw mode.
+            raw.c_lflag |= ISIG;
+            raw.c_cc[VSUSP]        = _POSIX_VDISABLE;
+            raw.c_cc[VQUIT]        = _POSIX_VDISABLE;
             static bool registered = (std::atexit(restore_at_exit), true);
             (void)registered;
             {
@@ -133,12 +138,47 @@ class StdioEndpoint : public ByteEndpoint {
     std::optional<termios> saved_;
 };
 
+// A host serial device at 115200 baud, raw, non-blocking.
+class SerialEndpoint : public ByteEndpoint {
+  public:
+    explicit SerialEndpoint(const std::string &path) : path_(path) {
+        fd_ = ::open(path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+        if (fd_ < 0) throw std::runtime_error("cannot open serial device " + path + ": " + std::strerror(errno));
+        termios tio{};
+        if (::tcgetattr(fd_, &tio) != 0) {
+            const std::string why = std::strerror(errno);
+            ::close(fd_);
+            throw std::runtime_error("cannot use " + path + " as a serial device: " + why);
+        }
+        ::cfmakeraw(&tio);
+        tio.c_cflag |= CLOCAL | CREAD;
+        tio.c_cc[VMIN]  = 0;
+        tio.c_cc[VTIME] = 0;
+        ::cfsetispeed(&tio, B115200);
+        ::cfsetospeed(&tio, B115200);
+        if (::tcsetattr(fd_, TCSANOW, &tio) != 0) {
+            const std::string why = std::strerror(errno);
+            ::close(fd_);
+            throw std::runtime_error("cannot configure serial device " + path + ": " + why);
+        }
+    }
+    ~SerialEndpoint() override { ::close(fd_); }
+
+    void                 write(std::span<const uint8_t> data) override { write_some(fd_, data); }
+    std::vector<uint8_t> read_nowait() override { return read_chunk(fd_); }
+    std::string          description() const override { return path_; }
+
+  private:
+    int         fd_ = -1;
+    std::string path_;
+};
+
 } // namespace
 
 std::unique_ptr<ByteEndpoint> make_endpoint(std::string_view spec) {
     if (spec == "pty") return std::make_unique<PtyEndpoint>();
     if (spec == "stdio") return make_stdio_endpoint(STDIN_FILENO, STDOUT_FILENO);
-    throw std::invalid_argument("serial device endpoints are not supported in this build");
+    return std::make_unique<SerialEndpoint>(std::string(spec));
 }
 
 std::unique_ptr<ByteEndpoint> make_stdio_endpoint(int in_fd, int out_fd) {

@@ -1,5 +1,6 @@
 #include "periph/uart.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace bk {
@@ -12,6 +13,7 @@ constexpr uint32_t kTxNeedWrite = 1u << 0, kRxNeedRead = 1u << 1, kTxStopEnd = 1
                    kLatchedMask = kTxStopEnd | kRxStopEnd;
 
 constexpr uint64_t kStopEndDelayNs = 1'000'000;
+constexpr uint64_t kTxBatchNs      = 1'000'000;
 } // namespace
 
 Uart::Uart(std::string name, const Clock &clock, Line irq)
@@ -75,8 +77,8 @@ void Uart::write(const std::string &, uint32_t offset, uint32_t, uint32_t value)
         case kFifoStatus: break;
         case kData: {
             if (endpoint_) {
-                uint8_t byte = static_cast<uint8_t>(value & 0xFF);
-                endpoint_->write(std::span<const uint8_t>(&byte, 1));
+                if (tx_.empty()) tx_deadline_ = clock_.now_ns() + kTxBatchNs;
+                tx_.push_back(static_cast<uint8_t>(value & 0xFF));
             }
             latched_ |= kTxStopEnd;
             break;
@@ -88,8 +90,20 @@ void Uart::write(const std::string &, uint32_t offset, uint32_t, uint32_t value)
     update_line();
 }
 
+void Uart::flush_tx() {
+    if (endpoint_ && !tx_.empty()) endpoint_->write(tx_);
+    tx_.clear();
+    tx_deadline_.reset();
+}
+
+std::optional<uint64_t> Uart::next_event_ns() const {
+    if (stop_deadline_ && tx_deadline_) return std::min(*stop_deadline_, *tx_deadline_);
+    return stop_deadline_ ? stop_deadline_ : tx_deadline_;
+}
+
 void Uart::tick(uint64_t now_ns) {
     last_tick_ = now_ns;
+    if (tx_deadline_ && now_ns >= *tx_deadline_) flush_tx();
     if (endpoint_) {
         std::vector<uint8_t> in = endpoint_->read_nowait();
         backlog_.insert(backlog_.end(), in.begin(), in.end());
@@ -105,6 +119,7 @@ void Uart::tick(uint64_t now_ns) {
 void Uart::reset() {
     fifo_.clear();
     backlog_.clear();
+    flush_tx(); // bytes the firmware already sent still reach the host
     fifo_config_ = irq_enable_ = latched_ = 0;
     words_                                = {};
     last_tick_                            = 0;

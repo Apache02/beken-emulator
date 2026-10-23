@@ -59,6 +59,10 @@ class Cpu {
     void                 mem_write(uint32_t addr, std::span<const uint8_t> data);
     std::vector<uint8_t> mem_read(uint32_t addr, uint32_t size);
 
+    // The instruction at pc; inside a memory callback that is the one making
+    // the access. Empty when it cannot be read.
+    std::optional<Instruction> instruction();
+
     uint32_t reg(Reg r);
     void     set_reg(Reg r, uint32_t value);
 

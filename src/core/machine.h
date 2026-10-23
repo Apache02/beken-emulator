@@ -37,6 +37,12 @@ struct ModuleContext {
     std::map<std::string, Line>   irqs;
     std::map<std::string, Signal> signals;
     ByteEndpoint                 *endpoint = nullptr;
+    // What a bus master can reach.
+    BusMemory *memory = nullptr;
+    // `dma` and `dma_request` become the request line of that DMA engine.
+    std::shared_ptr<RequestLine> dma;
+    // The instruction making the current access; empty when unavailable.
+    std::function<std::optional<Instruction>()> cpu_instruction;
 
     // Integer parameter `key`, or `fallback` when absent. Throws
     // std::invalid_argument if present but not an integer.

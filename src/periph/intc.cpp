@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "core/signal.h"
+
 namespace bk {
 
 namespace {
@@ -81,13 +83,7 @@ void Intc::reset() {
 Signal Intc::signal(const std::string &signal_name) {
     auto it = signals_.find(signal_name);
     if (it == signals_.end()) return Module::signal(signal_name);
-    SignalSpec spec = it->second;
-    return [this, spec] {
-        uint64_t mask    = spec.width >= 32 ? 0xFFFFFFFFull : ((1ull << spec.width) - 1);
-        uint32_t reg     = read("regs", spec.offset, 4);
-        uint64_t shifted = spec.shift >= 32 ? 0 : (reg >> spec.shift);
-        return (shifted & mask) == spec.equals;
-    };
+    return register_signal([this](uint32_t offset) { return read("regs", offset, 4); }, it->second);
 }
 
 } // namespace bk

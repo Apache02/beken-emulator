@@ -17,7 +17,11 @@ struct FakeClock : Clock {
 
 struct FakeEndpoint : ByteEndpoint {
     std::vector<uint8_t> sent, incoming;
-    void                 write(std::span<const uint8_t> d) override { sent.insert(sent.end(), d.begin(), d.end()); }
+    int                  writes = 0;
+    void                 write(std::span<const uint8_t> d) override {
+        ++writes;
+        sent.insert(sent.end(), d.begin(), d.end());
+    }
     std::vector<uint8_t> read_nowait() override { return std::exchange(incoming, {}); }
     std::string          description() const override { return "fake"; }
 };
@@ -45,10 +49,51 @@ TEST_CASE("tx goes to endpoint") {
     Fixture f;
     f.w(kData, 0x1A5);
     f.w(kData, 0x42);
+    f.uart.tick(1'000'000);
     CHECK(f.ep.sent == std::vector<uint8_t>{0xA5, 0x42});
     CHECK(f.uart.name() == "uart");
     CHECK(f.uart.ranges().at(0).name == "regs");
     CHECK(f.uart.ranges().at(0).size == 0x20);
+}
+
+TEST_CASE("tx burst reaches the endpoint in one write, 1 ms after its first byte") {
+    Fixture f;
+    f.clock.now = 5000;
+    f.w(kData, '\r');
+    f.clock.now = 105000; // 100 us later: still the same burst
+    f.w(kData, '\n');
+    CHECK(f.uart.next_event_ns() == std::optional<uint64_t>(1'005'000));
+    f.uart.tick(1'004'999);
+    CHECK(f.ep.writes == 0);
+    f.uart.tick(1'005'000);
+    CHECK(f.ep.writes == 1);
+    CHECK(f.ep.sent == std::vector<uint8_t>{'\r', '\n'});
+    CHECK_FALSE(f.uart.next_event_ns().has_value());
+    // The next byte starts a new burst.
+    f.clock.now = 2'000'000;
+    f.w(kData, 'x');
+    CHECK(f.uart.next_event_ns() == std::optional<uint64_t>(3'000'000));
+    f.uart.tick(3'000'000);
+    CHECK(f.ep.writes == 2);
+    CHECK(f.ep.sent == std::vector<uint8_t>{'\r', '\n', 'x'});
+}
+
+TEST_CASE("tx deadline and rx stop-end deadline: next event is the earlier one") {
+    Fixture f;
+    f.feed(1);
+    f.uart.tick(100); // stop-end armed for 1'000'100
+    f.clock.now = 0;
+    f.w(kData, 'a'); // tx deadline 1'000'000
+    CHECK(f.uart.next_event_ns() == std::optional<uint64_t>(1'000'000));
+}
+
+TEST_CASE("reset sends pending tx bytes") {
+    Fixture f;
+    f.w(kData, 'o');
+    f.w(kData, 'k');
+    f.uart.reset();
+    CHECK(f.ep.sent == std::vector<uint8_t>{'o', 'k'});
+    CHECK_FALSE(f.uart.next_event_ns().has_value());
 }
 
 TEST_CASE("tx without endpoint is dropped") {
@@ -230,6 +275,7 @@ TEST_CASE("reset keeps endpoint") {
     CHECK(f.r(kFifoStatus) == ((1u << 17) | (1u << 19) | (1u << 20)));
     CHECK_FALSE(f.uart.next_event_ns().has_value());
     f.w(kData, 0x77);
+    f.uart.tick(1'000'000);
     CHECK(f.ep.sent.back() == 0x77);
     f.feed(1, 0x33);
     f.uart.tick(10);

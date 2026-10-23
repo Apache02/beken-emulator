@@ -32,6 +32,9 @@ bool overlap(uint64_t base_a, uint64_t size_a, uint64_t base_b, uint64_t size_b)
     return base_a < base_b + size_b && base_b < base_a + size_a;
 }
 
+// Defined with the demand ranges below.
+bool hits(const std::vector<BadSpan> &bad, uint32_t rel, uint32_t size);
+
 } // namespace
 
 Bus::Bus(Cpu &cpu) : cpu_(cpu), log_(Logger::get("bus")) {
@@ -196,6 +199,69 @@ void Bus::write_memory(uint32_t addr, std::span<const uint8_t> data) {
     }
 }
 
+// ---- Bus master access ----
+
+BusError::BusError(uint32_t a, const std::string &reason)
+    : std::runtime_error(format("bus error at 0x%08X: ", a) + reason), addr(a) {}
+
+std::vector<uint8_t> Bus::read_chunk(uint32_t addr, uint32_t size) {
+    for (const MemRegion &r : regions_) {
+        if (addr >= r.base && addr < uint64_t{r.base} + r.size) {
+            uint32_t n = static_cast<uint32_t>(std::min<uint64_t>(size, uint64_t{r.base} + r.size - addr));
+            return cpu_.mem_read(addr, n);
+        }
+    }
+    Demand *d = find_demand(addr);
+    if (!d) throw BusError(addr, "nothing readable there");
+    const uint32_t offset   = addr - d->base;
+    const uint32_t page_off = offset & kPageMask;
+    const uint32_t n        = std::min<uint32_t>(size, page_off + kPage - offset);
+    Page           page     = d->module->page(d->range, page_off);
+    if (hits(page.bad, offset - page_off, n)) {
+        try {
+            d->module->read(d->range, offset, n); // logs the details and raises the fault
+        } catch (const Fault &) {
+        }
+        throw BusError(addr, "unreadable block");
+    }
+    return std::vector<uint8_t>(page.data.begin() + (offset - page_off), page.data.begin() + (offset - page_off) + n);
+}
+
+size_t Bus::write_chunk(uint32_t addr, std::span<const uint8_t> data) {
+    for (const MemRegion &r : regions_) {
+        if (addr >= r.base && addr < uint64_t{r.base} + r.size) {
+            size_t n = static_cast<size_t>(std::min<uint64_t>(data.size(), uint64_t{r.base} + r.size - addr));
+            cpu_.mem_write(addr, data.first(n));
+            // Code translated from the old bytes must not run again.
+            check(uc_ctl_remove_cache(cpu_.engine(), addr, uint64_t{addr} + n), "drop translations");
+            return n;
+        }
+    }
+    throw BusError(addr, "nothing writable there");
+}
+
+std::vector<uint8_t> Bus::Master::read(uint32_t addr, uint32_t size) {
+    std::vector<uint8_t> out;
+    out.reserve(size);
+    uint64_t a = addr;
+    while (size) {
+        std::vector<uint8_t> chunk = bus_.read_chunk(static_cast<uint32_t>(a), size);
+        out.insert(out.end(), chunk.begin(), chunk.end());
+        a += chunk.size();
+        size -= static_cast<uint32_t>(chunk.size());
+    }
+    return out;
+}
+
+void Bus::Master::write(uint32_t addr, std::span<const uint8_t> data) {
+    uint64_t a = addr;
+    while (!data.empty()) {
+        size_t n = bus_.write_chunk(static_cast<uint32_t>(a), data);
+        a += n;
+        data = data.subspan(n);
+    }
+}
+
 // ---- MMIO dispatch (hot path) ----
 
 const Bus::Slot *Bus::find(uint32_t addr) const {
@@ -213,8 +279,13 @@ uint32_t Bus::read(uint32_t addr, unsigned size) {
             log_.log(Level::Warning, format("unclaimed peripheral read at 0x%08X", addr));
         return 0;
     }
+    // A register answers every read with its whole word and the core picks the bytes it asked for
+    // (measured on the board, for every offset in the word).
+    const unsigned lane = addr & 3;
     try {
-        return s->module->read(*s->range, addr - s->base, size);
+        const uint32_t word = s->module->read(*s->range, (addr & ~3u) - s->base, 4);
+        if (size >= 4) return word;
+        return (word >> (8 * lane)) & ((1u << (8 * size)) - 1);
     } catch (const Fault &f) {
         cpu_.post_fault(f.kind);
     } catch (const std::exception &e) {
@@ -232,8 +303,15 @@ void Bus::write(uint32_t addr, unsigned size, uint32_t value) {
             log_.log(Level::Warning, format("unclaimed peripheral write at 0x%08X", addr));
         return;
     }
+    // A register is written as a whole word with no byte enables: the core repeats a byte or
+    // halfword on every byte lane, and the address only picks the lane inside the core (measured on
+    // the board: a store at +1, +2 or +3 reaches the same register).
+    if (size == 1)
+        value = (value & 0xFF) * 0x01010101u;
+    else if (size == 2)
+        value = (value & 0xFFFF) * 0x00010001u;
     try {
-        s->module->write(*s->range, addr - s->base, size, value);
+        s->module->write(*s->range, (addr & ~3u) - s->base, 4, value);
     } catch (const Fault &f) {
         cpu_.post_fault(f.kind);
     } catch (const std::exception &e) {

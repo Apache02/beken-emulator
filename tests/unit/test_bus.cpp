@@ -224,20 +224,33 @@ TEST_CASE("mmio read dispatches size and offset") {
     CHECK(f.out.str() == "");
 }
 
-TEST_CASE("mmio byte and halfword reads") {
+TEST_CASE("mmio byte and halfword reads take their bytes from the word the module returns") {
     Fixture f;
-    f.dev.value["other"] = 0xAB;
-    f.dev.value["regs"]  = 0xBEEF;
+    f.dev.value["other"] = 0x11223344;
+    f.dev.value["regs"]  = 0x55667788;
     f.program({kLdrbR1R2, kLdrhR3R4});
     f.cpu.set_reg(Reg::R2, kOther + 1);
     f.cpu.set_reg(Reg::R4, kRegs + 6);
     CHECK(f.run() == kOk);
+    // One word read per access, at the word address.
     CHECK(f.dev.calls == std::vector<Call>{
-                             {"read", "other", 1, 1, 0},
-                             {"read", "regs",  6, 2, 0}
+                             {"read", "other", 0, 4, 0},
+                             {"read", "regs",  4, 4, 0}
     });
-    CHECK(f.r(Reg::R1) == 0xAB);
-    CHECK(f.r(Reg::R3) == 0xBEEF);
+    CHECK(f.r(Reg::R1) == 0x33);
+    CHECK(f.r(Reg::R3) == 0x5566);
+    CHECK(f.out.str() == "");
+}
+
+TEST_CASE("mmio narrow reads see every lane of the word") {
+    for (uint32_t lane = 0; lane < 4; ++lane) {
+        Fixture f;
+        f.dev.value["regs"] = 0x11223344;
+        f.program({kLdrbR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + lane);
+        CHECK(f.run() == kOk);
+        CHECK(f.r(Reg::R1) == (0x11223344u >> (8 * lane) & 0xFF));
+    }
 }
 
 TEST_CASE("mmio write dispatch") {
@@ -247,11 +260,10 @@ TEST_CASE("mmio write dispatch") {
     SUBCASE("word, byte and halfword to one range") {
         f.cpu.set_reg(Reg::R2, kRegs + 8);
         CHECK(f.run() == kOk);
-        CHECK(f.dev.calls ==
-              std::vector<Call>{
-                  {"write", "regs", 8, 4, 0xCAFEBABE},
-                  {"write", "regs", 8, 1, 0xBE      },
-                  {"write", "regs", 8, 2, 0xBABE    }
+        CHECK(f.dev.calls == std::vector<Call>{
+                                 {"write", "regs", 8, 4, 0xCAFEBABE},
+                                 {"write", "regs", 8, 4, 0xBEBEBEBE},
+                                 {"write", "regs", 8, 4, 0xBABEBABE}
         });
     }
     SUBCASE("adjacent range gets its own offsets") {
@@ -259,10 +271,34 @@ TEST_CASE("mmio write dispatch") {
         CHECK(f.run() == kOk);
         CHECK(f.dev.calls == std::vector<Call>{
                                  {"write", "other", 4, 4, 0xCAFEBABE},
-                                 {"write", "other", 4, 1, 0xBE      },
-                                 {"write", "other", 4, 2, 0xBABE    }
+                                 {"write", "other", 4, 4, 0xBEBEBEBE},
+                                 {"write", "other", 4, 4, 0xBABEBABE}
         });
     }
+    CHECK(f.out.str() == "");
+}
+
+TEST_CASE("mmio narrow stores at any lane write the word at its address") {
+    Fixture  f;
+    uint32_t expect = 0xBEBEBEBE;
+    SUBCASE("byte at +1") {
+        f.program({kStrbR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + 9);
+    }
+    SUBCASE("byte at +3") {
+        f.program({kStrbR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + 11);
+    }
+    SUBCASE("halfword at +2") {
+        f.program({kStrhR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + 10);
+        expect = 0xBABEBABE;
+    }
+    f.cpu.set_reg(Reg::R1, 0xCAFEBABE);
+    CHECK(f.run() == kOk);
+    CHECK(f.dev.calls == std::vector<Call>{
+                             {"write", "regs", 8, 4, expect}
+    });
     CHECK(f.out.str() == "");
 }
 
@@ -538,6 +574,65 @@ TEST_CASE("demand bad span aborts, pabt for fetch") {
     CHECK(f.rom.pages == std::vector<uint32_t>{0});
     CHECK_FALSE(f.mapped(kRom));
     CHECK(f.out.str() == "");
+}
+
+TEST_CASE("bus master reads and writes RAM across region ends only within regions") {
+    Fixture       f;
+    BusMemory    &m       = f.bus.memory();
+    const uint8_t bytes[] = {1, 2, 3, 4, 5};
+    m.write(kData + 0x10, bytes);
+    CHECK(m.read(kData + 0x10, 5) == std::vector<uint8_t>{1, 2, 3, 4, 5});
+    CHECK(f.cpu.mem_read(kData + 0x12, 1) == std::vector<uint8_t>{3});
+    CHECK(m.read(kData, 0).empty());
+    // Data written by a bus master is also visible to the CPU's code cache.
+    const uint8_t last[] = {9, 8};
+    m.write(kData + 0xFFFE, last);
+    CHECK(m.read(kData + 0xFFFE, 2) == std::vector<uint8_t>{9, 8});
+}
+
+TEST_CASE("bus master access that leaves RAM is a bus error") {
+    Fixture    f;
+    BusMemory &m = f.bus.memory();
+    // The last two bytes of a region are fine, a third one is not.
+    CHECK_THROWS_WITH_AS(m.read(kData + 0xFFFE, 4), "bus error at 0x00410000: nothing readable there", BusError);
+    const uint8_t bytes[] = {1, 2, 3, 4};
+    CHECK_THROWS_WITH_AS(m.write(kData + 0xFFFE, bytes), "bus error at 0x00410000: nothing writable there", BusError);
+    // The part before the error was written.
+    CHECK(m.read(kData + 0xFFFE, 2) == std::vector<uint8_t>{1, 2});
+    // Peripheral registers, unmapped space and demand ranges (write) are not reachable.
+    CHECK_THROWS_AS(m.read(kRegs, 4), BusError);
+    CHECK_THROWS_AS(m.write(kRegs, bytes), BusError);
+    CHECK_THROWS_AS(m.read(0x30000000, 4), BusError);
+    CHECK_THROWS_WITH_AS(m.write(kRom, bytes), "bus error at 0x00100000: nothing writable there", BusError);
+    try {
+        m.read(0x30000000, 4);
+    } catch (const BusError &e) {
+        CHECK(e.addr == 0x30000000);
+    }
+}
+
+TEST_CASE("bus master reads a demand range page by page") {
+    Fixture    f;
+    BusMemory &m = f.bus.memory();
+    auto       v = m.read(kRom + 0xFFC, 8); // crosses from page 0 to page 1
+    REQUIRE(v.size() == 8);
+    for (uint32_t i = 0; i < 8; ++i) CHECK(v[i] == f.rom.mem[0xFFC + i]);
+    CHECK(f.rom.pages == std::vector<uint32_t>{0, 0x1000});
+}
+
+TEST_CASE("bus master read of a bad span is a bus error after the module reported it") {
+    Fixture f;
+    f.rom.bad[0x1000] = {
+        {0x10, 0x20}
+    };
+    BusMemory &m = f.bus.memory();
+    CHECK_NOTHROW(m.read(kRom + 0x1000, 0x10)); // up to the span
+    f.rom.calls.clear();
+    CHECK_THROWS_WITH_AS(m.read(kRom + 0x1008, 0x10), "bus error at 0x00101008: unreadable block", BusError);
+    REQUIRE(f.rom.calls.size() == 1);
+    CHECK(std::get<2>(f.rom.calls[0]) == 0x1008);
+    // A read that starts on the previous page and runs into the span fails too.
+    CHECK_THROWS_AS(m.read(kRom + 0xFF0, 0x30), BusError);
 }
 
 TEST_CASE("bad span adds hooks and requests restart") {

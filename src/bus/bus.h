@@ -68,7 +68,24 @@ class Bus {
     // outside the RAM regions.
     void write_memory(uint32_t addr, std::span<const uint8_t> data);
 
+    // What a DMA engine can reach: RAM regions read and write, demand ranges
+    // read-only. Accesses work in chunks that stop at the end of a region or
+    // page; anything else throws BusError. The reference stays valid for the
+    // lifetime of the bus.
+    BusMemory &memory() { return master_; }
+
   private:
+    class Master final : public BusMemory {
+      public:
+        explicit Master(Bus &bus) : bus_(bus) {}
+        std::vector<uint8_t> read(uint32_t addr, uint32_t size) override;
+        void                 write(uint32_t addr, std::span<const uint8_t> data) override;
+
+      private:
+        Bus &bus_;
+    };
+    friend class Master;
+
     struct Entry {
         uint32_t    base;
         uint64_t    end; // exclusive
@@ -113,6 +130,11 @@ class Bus {
     static void     on_page_read(uc_engine *, uc_mem_type type, uint64_t addr, int size, int64_t value, void *user);
     static void     on_page_code(uc_engine *, uint64_t addr, uint32_t size, void *user);
 
+    // One chunk of a bus-master access: up to `size` bytes starting at `addr`
+    // that stay inside one RAM region or one demand page.
+    std::vector<uint8_t> read_chunk(uint32_t addr, uint32_t size);
+    size_t               write_chunk(uint32_t addr, std::span<const uint8_t> data);
+
     uint32_t    read(uint32_t addr, unsigned size);
     void        write(uint32_t addr, unsigned size, uint32_t value);
     const Slot *find(uint32_t addr) const;
@@ -127,6 +149,7 @@ class Bus {
 
     Cpu                                  &cpu_;
     Logger                               &log_;
+    Master                                master_{*this};
     std::vector<MemRegion>                regions_;
     std::deque<Entry>                     entries_; // claim order; stable addresses for slots_
     std::vector<Slot>                     slots_;   // sorted by base

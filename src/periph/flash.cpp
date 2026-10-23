@@ -13,7 +13,7 @@ namespace bk {
 
 namespace {
 
-constexpr uint32_t kBlockRaw = 34, kBlockData = 32, kPage = 4096;
+constexpr uint32_t kBlockRaw = 34, kBlockData = 32, kPage = 4096, kCtrlSize = 0x28;
 constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kSrCnt = 0x14, kConf = 0x1C;
 constexpr uint32_t kStart = 1u << 29, kWp = 1u << 30, kBusy = 1u << 31;
 constexpr uint32_t kBlockProtect = 0x1C;
@@ -62,9 +62,22 @@ Logger &log() { return Logger::get("flash"); }
 
 } // namespace
 
-Flash::Flash(std::string name, uint32_t size, uint32_t jedec)
+Flash::Flash(std::string name, uint32_t size, uint32_t jedec, Options options)
     : name_(std::move(name)), size_(size), jedec_(jedec), blocks_(size / kBlockRaw),
-      window_((blocks_ * kBlockData + kPage - 1) / kPage * kPage), raw_(size, 0xFF), verdicts_(blocks_) {}
+      window_((blocks_ * kBlockData + kPage - 1) / kPage * kPage), raw_(size, 0xFF), verdicts_(blocks_),
+      options_(std::move(options)), words_(options_.words), conf_(options_.conf_reset),
+      m_value_(options_.m_value_reset) {
+    if (options_.read_ptr_reset >= kFifoWords)
+        throw std::invalid_argument(name_ + ": the read FIFO pointer reset must be 0-7");
+    read_ptr_ = options_.read_ptr_reset;
+    for (const auto &[offset, value] : options_.words) {
+        const bool defined = offset == kOperate || offset == kWriteData || offset == kReadData || offset == kId ||
+                             offset == kSrCnt || offset == kConf;
+        if (offset % 4 != 0 || offset >= kCtrlSize || defined)
+            throw std::invalid_argument(
+                format("%s: controller word at 0x%X is not a plain word of the ctrl range", name_.c_str(), offset));
+    }
+}
 
 bool Flash::block_valid(uint32_t n) {
     std::optional<bool> &v = verdicts_[n];
@@ -124,7 +137,10 @@ uint32_t Flash::read(const std::string &range, uint32_t offset, uint32_t size) {
         case kId: return jedec_;
         case kSrCnt: return sr_out_ | read_ptr_ << 16 | 7u << 19 | m_value_ << 22;
         case kConf: return conf_;
-        default: return 0;
+        default: {
+            auto it = words_.find(offset);
+            return it == words_.end() ? 0 : it->second;
+        }
     }
 }
 
@@ -141,7 +157,9 @@ void Flash::write(const std::string &range, uint32_t offset, uint32_t, uint32_t 
             break;
         case kSrCnt: m_value_ = (value >> 22) & 0xFF; break;
         case kConf: set_conf(value); break;
-        default: break;
+        default:
+            if (auto it = words_.find(offset); it != words_.end()) it->second = value;
+            break;
     }
 }
 
@@ -271,13 +289,15 @@ Page Flash::page(const std::string &range, uint32_t page_offset) {
 }
 
 void Flash::reset() {
-    operate_ = m_value_ = 0;
+    operate_ = 0;
+    m_value_ = options_.m_value_reset;
+    words_   = options_.words;
     sr_ = sr2_ = sr_out_ = 0;
     wel_                 = false;
     read_fifo_           = {};
-    read_ptr_            = 0;
+    read_ptr_            = options_.read_ptr_reset;
     write_fifo_.clear();
-    set_conf(kCrcEn);
+    set_conf(options_.conf_reset);
 }
 
 void Flash::check_load(uint32_t offset, uint32_t size) const {

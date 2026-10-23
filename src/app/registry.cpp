@@ -1,15 +1,28 @@
 #include "app/registry.h"
 
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "periph/flash.h"
+#include "periph/gdma.h"
+#include "periph/gpio.h"
+#include "periph/i2c1.h"
+#include "periph/default_picture.h"
 #include "periph/intc.h"
+#include "periph/jpeg.h"
+#include "periph/saradc.h"
+#include "periph/sctrl.h"
 #include "periph/timer.h"
+#include "periph/trng.h"
 #include "periph/uart.h"
+#include "periph/unknown.h"
+#include "periph/wifi_mac.h"
 #include "periph/wdt.h"
 
 namespace bk {
@@ -37,9 +50,9 @@ const ParamTable *table_param(const ModuleContext &ctx, const std::string &key) 
 }
 
 // Keys are offsets written as strings ("0x08" or "8").
-std::map<uint32_t, uint32_t> reset_words(const ModuleContext &ctx) {
+std::map<uint32_t, uint32_t> reset_words(const ModuleContext &ctx, const std::string &param = "reset_words") {
     std::map<uint32_t, uint32_t> words;
-    const ParamTable            *t = table_param(ctx, "reset_words");
+    const ParamTable            *t = table_param(ctx, param);
     if (!t) return words;
     for (const auto &[key, value] : t->entries) {
         size_t             used   = 0;
@@ -50,11 +63,36 @@ std::map<uint32_t, uint32_t> reset_words(const ModuleContext &ctx) {
             used = 0;
         }
         if (used == 0 || used != key.size() || offset > 0xFFFFFFFFULL)
-            bad(ctx, "reset_words key '" + key + "' is not an offset");
-        if (!value.integer()) bad(ctx, "reset_words value for " + key + " must be an integer");
-        words[static_cast<uint32_t>(offset)] = u32(ctx, "reset_words " + key, *value.integer());
+            bad(ctx, param + " key '" + key + "' is not an offset");
+        if (!value.integer()) bad(ctx, param + " value for " + key + " must be an integer");
+        words[static_cast<uint32_t>(offset)] = u32(ctx, param + " " + key, *value.integer());
     }
     return words;
+}
+
+// A list of { offset, shift, width, add } tables.
+std::vector<ReadAdjust> read_adjust(const ModuleContext &ctx) {
+    std::vector<ReadAdjust> out;
+    const ParamValue       *v = ctx.params.find("read_adjust");
+    if (!v) return out;
+    const ParamList *empty = v->list();
+    if (empty && empty->empty()) return out;
+    if (!v->tables()) bad(ctx, "read_adjust must be a list of tables");
+    for (const ParamTable &t : *v->tables()) {
+        auto field = [&](const char *key) -> int64_t {
+            const ParamValue *f = t.find(key);
+            if (!f || !f->integer()) bad(ctx, std::string("read_adjust needs an integer ") + key);
+            return *f->integer();
+        };
+        int64_t shift = field("shift"), width = field("width");
+        if (shift < 0 || shift > 31 || width < 1 || width > 32 || shift + width > 32)
+            bad(ctx, "read_adjust field does not fit in 32 bits");
+        out.push_back({u32(ctx, "read_adjust offset", field("offset")),
+                       static_cast<unsigned>(shift),
+                       static_cast<unsigned>(width),
+                       u32(ctx, "read_adjust add", field("add"))});
+    }
+    return out;
 }
 
 // Each signal is either a list [offset, bit] (active while that bit is set) or
@@ -108,19 +146,77 @@ std::map<std::string, SignalSpec> signal_specs(const ModuleContext &ctx) {
 ModuleRegistry builtin_registry() {
     ModuleRegistry r;
     r["flash"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        Flash::Options options;
+        options.conf_reset    = u32_param(ctx, "conf_reset", Flash::kCrcEn);
+        options.m_value_reset = u32_param(ctx, "m_value_reset", 0);
+        if (options.m_value_reset > 0xFF) bad(ctx, "m_value_reset must be a byte");
+        options.read_ptr_reset = u32_param(ctx, "read_ptr_reset", 0);
+        if (options.read_ptr_reset > 7) bad(ctx, "read_ptr_reset must be 0-7");
+        options.words = reset_words(ctx);
         return std::make_unique<Flash>(
-            ctx.name, u32_param(ctx, "size", 0x200000), u32_param(ctx, "jedec_id", 0x1C7015));
+            ctx.name, u32_param(ctx, "size", 0x200000), u32_param(ctx, "jedec_id", 0x1C7015), std::move(options));
+    };
+    r["gdma"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t bus_hz = u32_param(ctx, "bus_hz", 120000000);
+        if (bus_hz == 0) bad(ctx, "bus_hz must not be 0");
+        if (!ctx.memory) bad(ctx, "needs a bus master port");
+        return std::make_unique<Gdma>(ctx.name, ctx.clock, ctx.irq, *ctx.memory, bus_hz);
+    };
+    r["gpio"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<Gpio>(ctx.name, ctx.irq, u32_param(ctx, "pin_reset", 0), reset_words(ctx));
+    };
+    r["i2c1"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t ref_hz = u32_param(ctx, "ref_hz", 26000000);
+        if (ref_hz == 0) bad(ctx, "ref_hz must not be 0");
+        return std::make_unique<I2c1>(ctx.name, ctx.clock, ctx.irq, ref_hz);
     };
     r["intc"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Intc>(ctx.name, ctx.cpu_irq, ctx.cpu_fiq, reset_words(ctx), signal_specs(ctx));
     };
+    r["jpeg"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        std::vector<uint8_t> picture(kDefaultPicture, kDefaultPicture + kDefaultPicture_size);
+        if (const ParamValue *path = ctx.params.find("picture")) {
+            if (!path->string()) bad(ctx, "picture must be a file name");
+            std::ifstream file(*path->string(), std::ios::binary);
+            if (!file) bad(ctx, "cannot read picture '" + *path->string() + "'");
+            picture.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        return std::make_unique<Jpeg>(ctx.name,
+                                      ctx.clock,
+                                      ctx.irq,
+                                      ctx.dma,
+                                      u32_param(ctx, "frame_interval_ms", 1000),
+                                      u32_param(ctx, "encode_ms", 150),
+                                      std::move(picture));
+    };
+    r["saradc"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<Saradc>(ctx.name, ctx.irq, u32_param(ctx, "sample", 330));
+    };
+    r["sctrl"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<Sctrl>(ctx.name,
+                                       u32_param(ctx, "chip_id", 0),
+                                       u32_param(ctx, "device_id", 0),
+                                       reset_words(ctx),
+                                       reset_words(ctx, "warm_reset_words"),
+                                       signal_specs(ctx),
+                                       read_adjust(ctx));
+    };
     r["timer"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Timer>(ctx.name, ctx.clock, ctx.irq, u32_param(ctx, "hz", 26000000));
     };
+    r["trng"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> { return std::make_unique<Trng>(ctx.name); };
     r["uart"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         auto uart = std::make_unique<Uart>(ctx.name, ctx.clock, ctx.irq);
         uart->attach(ctx.endpoint);
         return uart;
+    };
+    r["unknown"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t size = u32_param(ctx, "size", 0x100);
+        if (size == 0) bad(ctx, "size must not be 0");
+        return std::make_unique<Unknown>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction);
+    };
+    r["wifi_mac"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<WifiMac>(ctx.name, ctx.clock, ctx.signal("mac_powered"), ctx.cpu_instruction);
     };
     r["wdt"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Wdt>(ctx.name, ctx.clock, ctx.reset_chip, ctx.signal("clock_off"));

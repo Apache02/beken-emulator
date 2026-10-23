@@ -12,6 +12,11 @@ endif ()
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(deps)
+include(embed)
+
+# The picture the jpeg module shows by default is built into the executable.
+embed_file("${CMAKE_CURRENT_SOURCE_DIR}/data/picture.jpg"
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/default_picture.cpp" bk kDefaultPicture)
 
 enable_testing()
 
@@ -29,9 +34,21 @@ add_library(bk_core STATIC
         src/app/cli.cpp
         src/app/endpoints.cpp
         src/periph/flash.cpp
+        src/i2c/catalog.cpp
+        src/i2c/register_device.cpp
+        src/periph/gdma.cpp
+        src/periph/gpio.cpp
+        src/periph/i2c1.cpp
         src/periph/intc.cpp
+        src/periph/jpeg.cpp
+        src/periph/saradc.cpp
+        src/periph/sctrl.cpp
         src/periph/timer.cpp
+        src/periph/trng.cpp
         src/periph/uart.cpp
+        src/periph/unknown.cpp
+        src/periph/wifi_mac.cpp
+        "${CMAKE_CURRENT_BINARY_DIR}/generated/default_picture.cpp"
         src/periph/wdt.cpp)
 target_include_directories(bk_core PUBLIC src)
 target_compile_options(bk_core PRIVATE -Wall -Wextra)
@@ -45,6 +62,16 @@ add_executable(unit_tests
         tests/unit/main.cpp
         tests/unit/test_log.cpp
         tests/unit/test_intc.cpp
+        tests/unit/test_sctrl.cpp
+        tests/unit/test_gpio.cpp
+        tests/unit/test_gdma.cpp
+        tests/unit/test_jpeg.cpp
+        tests/unit/test_wifi_mac.cpp
+        tests/unit/test_i2c1.cpp
+        tests/unit/test_i2c_devices.cpp
+        tests/unit/test_trng.cpp
+        tests/unit/test_saradc.cpp
+        tests/unit/test_unknown.cpp
         tests/unit/test_timer.cpp
         tests/unit/test_uart.cpp
         tests/unit/test_wdt.cpp

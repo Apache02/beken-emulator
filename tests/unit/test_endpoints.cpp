@@ -186,7 +186,12 @@ TEST_CASE("stdio endpoint puts a terminal in raw mode until destroyed") {
         auto    ep = make_stdio_endpoint(s.fd, s.fd);
         termios during{};
         REQUIRE(::tcgetattr(s.fd, &during) == 0);
-        CHECK((during.c_lflag & (ICANON | ECHO | ISIG)) == 0);
+        CHECK((during.c_lflag & (ICANON | ECHO)) == 0);
+        // Ctrl-C still stops the emulator; the other signal characters are off.
+        CHECK((during.c_lflag & ISIG) != 0);
+        CHECK(during.c_cc[VINTR] == before.c_cc[VINTR]);
+        CHECK(during.c_cc[VSUSP] == _POSIX_VDISABLE);
+        CHECK(during.c_cc[VQUIT] == _POSIX_VDISABLE);
 
         write_all(m.fd, bytes("key"));
         CHECK(collect(*ep, 3) == bytes("key"));
@@ -211,11 +216,72 @@ TEST_CASE("stdio read_nowait is bounded at 4096 bytes") {
     CHECK(ep->read_nowait().empty());
 }
 
-TEST_CASE("unknown endpoint spec throws") {
-    try {
-        make_endpoint("/dev/ttyUSB0");
-        FAIL("no exception");
-    } catch (const std::invalid_argument &e) {
-        CHECK(std::string(e.what()) == "serial device endpoints are not supported in this build");
+TEST_CASE("a serial device endpoint reads and writes through the device") {
+    // A pty slave is a terminal like any serial port.
+    int  master = -1, slave = -1;
+    char name[256] = {};
+    REQUIRE(::openpty(&master, &slave, name, nullptr, nullptr) == 0);
+    Fd   m(master), s(slave);
+    auto ep = make_endpoint(name);
+    CHECK(ep->description() == name);
+    CHECK(ep->read_nowait().empty());
+
+    write_all(m.fd, bytes("to the emulator"));
+    CHECK(collect(*ep, 15) == bytes("to the emulator"));
+
+    ep->write(bytes("from the emulator"));
+    std::vector<uint8_t> got;
+    const auto           deadline = SteadyClock::now() + 1s;
+    while (got.size() < 17 && SteadyClock::now() < deadline) {
+        uint8_t buf[64];
+        pollfd  p{m.fd, POLLIN, 0};
+        if (::poll(&p, 1, 50) > 0) {
+            ssize_t n = ::read(m.fd, buf, sizeof buf);
+            if (n > 0) got.insert(got.end(), buf, buf + n);
+        }
     }
+    CHECK(got == bytes("from the emulator"));
+}
+
+TEST_CASE("a serial device endpoint puts the port in raw mode at 115200 baud") {
+    int  master = -1, slave = -1;
+    char name[256] = {};
+    REQUIRE(::openpty(&master, &slave, name, nullptr, nullptr) == 0);
+    Fd      m(master), s(slave);
+    auto    ep = make_endpoint(name);
+    termios tio{};
+    REQUIRE(::tcgetattr(s.fd, &tio) == 0);
+    CHECK((tio.c_lflag & (ICANON | ECHO)) == 0);
+    CHECK(::cfgetospeed(&tio) == B115200);
+    CHECK(::cfgetispeed(&tio) == B115200);
+    // Bytes pass unchanged: no CR/LF translation either way.
+    write_all(m.fd, bytes("a\r\nb\n"));
+    CHECK(collect(*ep, 5) == bytes("a\r\nb\n"));
+}
+
+TEST_CASE("a serial device endpoint swallows write errors") {
+    int  master = -1, slave = -1;
+    char name[256] = {};
+    REQUIRE(::openpty(&master, &slave, name, nullptr, nullptr) == 0);
+    auto ep = make_endpoint(name);
+    ::close(master); // the peer is gone
+    ep->write(bytes("nobody listens"));
+    CHECK(ep->read_nowait().empty());
+    ::close(slave);
+}
+
+TEST_CASE("serial device endpoint errors") {
+    auto message = [](const char *spec) -> std::string {
+        try {
+            make_endpoint(spec);
+        } catch (const std::runtime_error &e) {
+            return e.what();
+        }
+        return "(no error)";
+    };
+    CHECK(message("/dev/bk7252-no-such-serial-device") ==
+          "cannot open serial device /dev/bk7252-no-such-serial-device: No such file or directory");
+    // Something that exists but is not a terminal.
+    CHECK(message("/dev/null").starts_with("cannot use /dev/null as a serial device: "));
+    CHECK(message("ptty").starts_with("cannot open serial device ptty: "));
 }

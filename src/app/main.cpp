@@ -1,5 +1,6 @@
 // The emulator executable: builds a machine from a profile, loads images,
-// connects UART1/UART2 to host endpoints and runs until stopped.
+// attaches the requested I2C devices, connects every UART to a host endpoint
+// and runs until stopped.
 
 #include <csignal>
 #include <cstdlib>
@@ -19,6 +20,8 @@
 #include "core/log.h"
 #include "core/machine.h"
 #include "core/profile_loader.h"
+#include "i2c/catalog.h"
+#include "periph/i2c1.h"
 #include "periph/uart.h"
 
 namespace {
@@ -68,10 +71,18 @@ int run(int argc, char **argv) {
         bk::colour_enabled(::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR"), std::getenv("FORCE_COLOR")));
     for (const std::string &d : options.debug) bk::Logger::set_debug(d);
 
-    bk::Profile                 profile = bk::load_profile(options.profile, bk::profile_dir(executable_path(argv[0])));
+    bk::Profile profile = bk::load_profile(options.profile, bk::profile_dir(executable_path(argv[0])));
+    // The devices outlive the machine that talks to them.
+    std::vector<std::pair<std::string, std::unique_ptr<bk::I2cDevice>>> i2c_devices;
+    for (const auto &[bus, spec] : options.i2c) i2c_devices.emplace_back(bus, bk::parse_device_spec(spec));
     bk::Machine                 machine(profile, bk::builtin_registry());
     std::vector<bk::LoadAction> loads = bk::plan_loads(machine, options.loads);
     bk::apply(loads);
+    for (const auto &[bus, device] : i2c_devices) {
+        auto *controller = dynamic_cast<bk::I2c1 *>(machine.module(bus));
+        if (!controller) throw std::invalid_argument("no I2C bus named " + bus + " in profile " + profile.name);
+        controller->attach(device.get());
+    }
 
     // A write to a closed stdout must not kill the emulator.
     std::signal(SIGPIPE, SIG_IGN);
@@ -81,13 +92,16 @@ int run(int argc, char **argv) {
 
     // Declared after the machine: destroyed (and terminals restored) first.
     std::map<std::string, std::unique_ptr<bk::ByteEndpoint>> endpoints;
-    for (const auto &[name, spec] : {
-             std::pair{std::string("UART1"), options.uart1},
-             std::pair{std::string("UART2"), options.uart2}
-    }) {
-        auto *uart = dynamic_cast<bk::Uart *>(machine.module(name));
+    for (const auto &[name, spec] : options.uart) {
+        if (!dynamic_cast<bk::Uart *>(machine.module(name)))
+            throw std::invalid_argument("no UART named " + name + " in profile " + profile.name);
+    }
+    for (const bk::ModuleSpec &m : profile.modules) {
+        auto *uart = dynamic_cast<bk::Uart *>(machine.module(m.name));
         if (!uart) continue;
-        auto endpoint = bk::make_endpoint(spec);
+        const std::string &name     = m.name;
+        auto               given    = options.uart.find(name);
+        auto               endpoint = bk::make_endpoint(given == options.uart.end() ? "pty" : given->second);
         uart->attach(endpoint.get());
         std::cout << name << ": " << endpoint->description() << std::endl;
         endpoints[name] = std::move(endpoint);

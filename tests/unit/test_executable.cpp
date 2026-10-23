@@ -10,6 +10,7 @@
 #include <poll.h>
 #include <pty.h>
 #include <string>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -76,6 +77,7 @@ struct Child {
         REQUIRE(pid >= 0);
         if (pid == 0) {
             ::setsid();
+            if (stdio_on_tty) ::ioctl(slave, TIOCSCTTY, 0); // the terminal becomes the controlling one
             ::dup2(stdio_on_tty ? slave : ::open("/dev/null", O_RDONLY), 0);
             ::dup2(slave, 1);
             ::dup2(e[1], 2);
@@ -197,14 +199,52 @@ TEST_CASE("executable with an unknown profile exits 2") {
     CHECK(c.err_text.starts_with("error: no profile NOPE"));
 }
 
-TEST_CASE("executable with a serial device spec exits 2") {
+TEST_CASE("executable with a serial device it cannot open exits 2") {
     TempDir  dir;
     fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
-    Child    c({"BK7252", "--load", "bootloader:" + image.string(), "--uart2", "/dev/ttyUSB0"});
+    Child    c({"BK7252", "--load", "bootloader:" + image.string(), "--uart2", "/dev/bk7252-no-such-serial-device"});
     auto     status = c.wait_exit(2000ms);
     REQUIRE(status.has_value());
     CHECK(*status == 2);
-    CHECK(c.err_text == "error: serial device endpoints are not supported in this build\n");
+    CHECK(c.err_text ==
+          "error: cannot open serial device /dev/bk7252-no-such-serial-device: No such file or directory\n");
+}
+
+TEST_CASE("executable refuses a --uart name the profile does not have") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    Child    c({"BK7252", "--load", "bootloader:" + image.string(), "--uart", "UART9=stdio"});
+    auto     status = c.wait_exit(2000ms);
+    REQUIRE(status.has_value());
+    CHECK(*status == 2);
+    CHECK(c.err_text == "error: no UART named UART9 in profile BK7252\n");
+    // TIMER0 exists but is not a UART.
+    Child t({"BK7252", "--load", "bootloader:" + image.string(), "--uart", "TIMER0=stdio"});
+    status = t.wait_exit(2000ms);
+    REQUIRE(status.has_value());
+    CHECK(*status == 2);
+    CHECK(t.err_text == "error: no UART named TIMER0 in profile BK7252\n");
+}
+
+TEST_CASE("executable reports bad I2C requests with exit 2") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    auto     error = [&](std::vector<std::string> extra) {
+        std::vector<std::string> args{"BK7252", "--load", "bootloader:" + image.string()};
+        args.insert(args.end(), extra.begin(), extra.end());
+        Child c(args);
+        auto  status = c.wait_exit(2000ms);
+        REQUIRE(status.has_value());
+        CHECK(*status == 2);
+        return c.err_text;
+    };
+    CHECK(error({"--i2c1", "ov7670"}) == "error: unknown I2C device 'ov7670' (known: hi704)\n");
+    CHECK(error({"--i2c1", "hi704@0x99"}) ==
+          "error: bad I2C device 'hi704@0x99' (want TYPE[@ADDRESS], ADDRESS a 7-bit number 0x08-0x77)\n");
+    CHECK(error({"--i2c", "I2C9=hi704"}) == "error: no I2C bus named I2C9 in profile BK7252\n");
+    CHECK(error({"--i2c", "UART1=hi704"}) == "error: no I2C bus named UART1 in profile BK7252\n");
+    CHECK(error({"--i2c1", "hi704", "--i2c1", "hi704"}) ==
+          "error: I2C1 address 0x30 is used twice (hi704 and hi704)\n");
 }
 
 TEST_CASE("executable stops on SIGINT while running") { stops_cleanly({kBranchSelf}, SIGINT); }
@@ -214,6 +254,19 @@ TEST_CASE("executable stops on SIGTERM while running") { stops_cleanly({kBranchS
 TEST_CASE("executable stops on SIGINT while idle") { stops_cleanly({kWfi, kBranchBack4}, SIGINT); }
 
 TEST_CASE("executable stops on SIGTERM while idle") { stops_cleanly({kWfi, kBranchBack4}, SIGTERM); }
+
+TEST_CASE("executable stops on Ctrl-C typed on a stdio terminal") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kWfi, kBranchBack4});
+    Child    c({"BK7252", "--load", "bootloader:" + image.string(), "--uart2", "stdio"}, true);
+    REQUIRE(c.wait_for_output("UART1: ", 2000ms));
+    ::usleep(200000);
+    const char etx = 0x03;
+    REQUIRE(::write(c.master, &etx, 1) == 1);
+    auto status = c.wait_exit(2000ms);
+    REQUIRE(status.has_value());
+    CHECK(*status == 0);
+}
 
 TEST_CASE("executable restores a stdio terminal on SIGTERM") {
     TempDir        dir;

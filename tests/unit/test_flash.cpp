@@ -644,6 +644,107 @@ TEST_CASE("reset keeps contents") {
     CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
 }
 
+namespace {
+
+// The controller as a running chip is measured: clk_conf 15, the quad-mode M byte 0xa0 and an
+// unused non-zero word.
+Flash::Options measured() {
+    Flash::Options o;
+    o.conf_reset     = Flash::kCrcEn | 0xF;
+    o.m_value_reset  = 0xA0;
+    o.read_ptr_reset = 1;
+    o.words          = {
+        {0x20, 0x01FFFFFF}
+    };
+    return o;
+}
+
+} // namespace
+
+TEST_CASE("controller start state can be given and is what reset returns to") {
+    Flash flash("flash", 0x200000, 0x1C7015, measured());
+    auto  r = [&](uint32_t off) { return flash.read("ctrl", off, 4); };
+    auto  w = [&](uint32_t off, uint32_t v) { flash.write("ctrl", off, 4, v); };
+    CHECK(r(kConf) == 0x0400000F);
+    CHECK(r(kSrCnt) == (0xA0u << 22 | 7u << 19 | 1u << 16));
+    CHECK(r(0x20) == 0x01FFFFFF);
+    // Everything the firmware may change goes back at reset.
+    w(kConf, kCrcEn);
+    w(kSrCnt, 0x11u << 22);
+    w(0x20, 5);
+    r(kReadData); // moves the read pointer
+    CHECK(r(0x20) == 5);
+    flash.reset();
+    CHECK(r(kConf) == 0x0400000F);
+    CHECK(r(kSrCnt) == (0xA0u << 22 | 7u << 19 | 1u << 16));
+    CHECK(r(0x20) == 0x01FFFFFF);
+}
+
+TEST_CASE("the read FIFO pointer reset is 0-7 and a read command starts over at 0") {
+    for (uint32_t ptr : {8u, 100u}) {
+        Flash::Options o;
+        o.read_ptr_reset = ptr;
+        CHECK_THROWS_AS(Flash("flash", 0x200000, 0x1C7015, o), std::invalid_argument);
+    }
+    Flash::Options o;
+    o.read_ptr_reset = 7;
+    Flash flash("flash", 0x200000, 0x1C7015, o);
+    CHECK(((flash.read("ctrl", kSrCnt, 4) >> 16) & 7) == 7);
+    flash.write("ctrl", kOperate, 4, 5u << 24 | 1u << 29 | 1u << 30); // READ
+    CHECK(((flash.read("ctrl", kSrCnt, 4) >> 16) & 7) == 0);
+}
+
+TEST_CASE("controller words that are not given read 0 and ignore writes") {
+    Flash flash("flash", 0x200000, 0x1C7015, measured());
+    flash.write("ctrl", 0x24, 4, 0x1234);
+    flash.write("ctrl", 0x0C, 4, 0x1234);
+    flash.write("ctrl", 0x18, 4, 0x1234);
+    CHECK(flash.read("ctrl", 0x24, 4) == 0);
+    CHECK(flash.read("ctrl", 0x0C, 4) == 0);
+    CHECK(flash.read("ctrl", 0x18, 4) == 0);
+    Flash plain("flash");
+    CHECK(plain.read("ctrl", 0x20, 4) == 0);
+    CHECK(plain.read("ctrl", kConf, 4) == Flash::kCrcEn);
+    CHECK(plain.read("ctrl", kSrCnt, 4) == 7u << 19);
+}
+
+TEST_CASE("a start state without crc_en reads bad blocks, reset keeps it") {
+    std::ostringstream out; // the ALERT log of the read that faults
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    Flash::Options o;
+    o.conf_reset = 0;
+    Flash flash("flash", 0x200000, 0x1C7015, o);
+    // A block with a wrong CRC reads its data while crc_en is clear.
+    std::vector<uint8_t> block(34, 0x11);
+    flash.load(0, block);
+    CHECK(flash.read("xip", 0, 4) == 0x11111111);
+    flash.write("ctrl", kConf, 4, kCrcEn);
+    CHECK_THROWS_AS(flash.read("xip", 0, 4), Fault);
+    flash.reset();
+    CHECK(flash.read("ctrl", kConf, 4) == 0);
+    CHECK(flash.read("xip", 0, 4) == 0x11111111);
+    CHECK(out.str().find("ALERT") != std::string::npos);
+    Logger::reset_for_tests();
+}
+
+TEST_CASE("controller words must be plain word offsets of the ctrl range") {
+    for (uint32_t offset : {0x00u, 0x04u, 0x08u, 0x10u, 0x14u, 0x1Cu, 0x28u, 0x100u, 0x21u, 0x22u}) {
+        Flash::Options o;
+        o.words = {
+            {offset, 1}
+        };
+        CHECK_THROWS_AS(Flash("flash", 0x200000, 0x1C7015, o), std::invalid_argument);
+    }
+    for (uint32_t offset : {0x0Cu, 0x18u, 0x20u, 0x24u}) {
+        Flash::Options o;
+        o.words = {
+            {offset, 1}
+        };
+        CHECK_NOTHROW(Flash("flash", 0x200000, 0x1C7015, o));
+    }
+}
+
 TEST_CASE("load rejects data larger than the flash") {
     Fixture f;
     CHECK_THROWS_AS(f.flash.check_load(0, UINT32_MAX), std::invalid_argument);

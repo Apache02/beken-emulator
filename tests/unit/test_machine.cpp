@@ -380,16 +380,19 @@ TEST_CASE("machine assembles minimal profile") {
     CHECK(m.cpu().reg(Reg::R1) == 0x100);
     CHECK(m.cpu().reg(Reg::R3) == 1234);
     CHECK(word_at(m, kRam) == 0xCAFEF00D);
+    CHECK(sink.out.empty()); // UART output is batched for 1 ms of device time
+    m.module("UART")->tick(m.scheduler().now_ns() + 1'000'000);
     CHECK(sink.out == std::vector<uint8_t>{'H'});
 }
 
 TEST_CASE("unknown module type error text") {
     Profile p = chip();
     p.modules = {
-        {"gpio", "GPIO", {{"regs", 0x00802800}}, {}}
+        {"bogus", "BOGUS", {{"regs", 0x00802800}}, {}}
     };
+    // The known types are listed in registry order, so the full text changes with every new module type.
     CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()),
-                         "unknown module type 'gpio' (known: flash, intc, timer, uart, wdt)",
+                         doctest::Contains("unknown module type 'bogus' (known: flash, "),
                          std::invalid_argument);
 }
 
@@ -506,6 +509,7 @@ TEST_CASE("chip reset refills ram, keeps flash, resets cpu") {
     CHECK(m.cpu().reg(Reg::CPSR) == 0xD3);
     CHECK(m.scheduler().now_ns() == 30000);        // device time is not reset
     m.module("UART")->write("regs", 0x0C, 4, 'k'); // endpoint still attached
+    m.module("UART")->tick(m.scheduler().now_ns() + 1'000'000);
     CHECK(sink.out == std::vector<uint8_t>{'k'});
 }
 
@@ -659,4 +663,157 @@ TEST_CASE("intc signal bad list form rejected") {
         icu_signal(ParamList{8}, 0, m), "module ICU: signal s must be [offset, bit] or a table", std::invalid_argument);
     CHECK_THROWS_WITH_AS(
         icu_signal("bogus", 0, m), "module ICU: signal s must be [offset, bit] or a table", std::invalid_argument);
+}
+
+namespace {
+
+constexpr uint32_t kGdma = 0x00809000;
+
+ModuleSpec gdma_spec() {
+    return {
+        "gdma", "GDMA", {{"regs", kGdma}},
+          {{"intc", "ICU"}, {"irq", 15}}
+    };
+}
+
+// Builds ICU, GDMA and a probe with `probe_params`; keeps what the probe was given.
+struct DmaWorld {
+    World                        world;
+    std::shared_ptr<RequestLine> line;
+    BusMemory                   *memory = nullptr;
+    std::unique_ptr<Machine>     machine;
+
+    explicit DmaWorld(ParamTable probe_params, bool gdma_first = true) {
+        Profile p = chip();
+        p.modules = {icu_spec()};
+        if (gdma_first) p.modules.push_back(gdma_spec());
+        p.modules.push_back(probe("P", std::move(probe_params)));
+        if (!gdma_first) p.modules.push_back(gdma_spec());
+        ModuleRegistry r = with_probe(world);
+        r["probe"]       = [this](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+            line   = ctx.dma;
+            memory = ctx.memory;
+            return std::make_unique<Probe>(ctx, world);
+        };
+        machine = std::make_unique<Machine>(p, r);
+    }
+};
+
+} // namespace
+
+TEST_CASE("dma and dma_request give the module a request line of that engine") {
+    DmaWorld w({
+        {"dma",         "GDMA"},
+        {"dma_request", 8     }
+    });
+    REQUIRE(w.line);
+    CHECK(w.memory != nullptr);
+    // The parameters are consumed.
+    CHECK(w.world.param_keys["P"].empty());
+    // The line is the one the engine uses: a channel whose source is request 8 is paced by it.
+    Module *dma = w.machine->module("GDMA");
+    w.line->bind([] { return std::array<uint8_t, 4>{0x11, 0x22, 0x33, 0x44}; });
+    w.line->set(true);
+    dma->write("regs", 0x04, 4, kRam + 0x100);                                   // destination
+    dma->write("regs", 0x1C, 4, 8);                                              // source request 8
+    dma->write("regs", 0x00, 4, (3u << 16) | (2u << 6) | (2u << 4) | 0x200 | 1); // 4 bytes, 32-bit, dst +4
+    dma->tick(w.machine->scheduler().now_ns() + 1'000'000);
+    CHECK(word_at(*w.machine, kRam + 0x100) == 0x44332211);
+}
+
+TEST_CASE("dma request line errors") {
+    CHECK_THROWS_WITH_AS(DmaWorld({
+                             {"dma", "GDMA"}
+    }),
+                         "module P: dma needs dma_request 0-15",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(DmaWorld({
+                             {"dma",         "GDMA"},
+                             {"dma_request", 16    }
+    }),
+                         "module P: dma needs dma_request 0-15",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(DmaWorld({
+                             {"dma",         3},
+                             {"dma_request", 8}
+    }),
+                         "module P: dma must be a module name",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(DmaWorld(
+                             {
+                                 {"dma",         "GDMA"},
+                                 {"dma_request", 8     }
+    },
+                             false),
+                         "module P needs GDMA listed before it in the profile",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(DmaWorld({
+                             {"dma",         "ICU"},
+                             {"dma_request", 8    }
+    }),
+                         "ICU: not a DMA engine (asked for request line 8)",
+                         std::invalid_argument);
+}
+
+TEST_CASE("the jpeg module's frame reaches RAM through the GDMA request line") {
+    Profile p = chip();
+    p.modules = {
+        icu_spec(),
+        gdma_spec(),
+        {"jpeg",
+            "JPEG", {{"regs", 0x0080A000}},
+            {{"intc", "ICU"},
+          {"irq", 29},
+          {"dma", "GDMA"},
+          {"dma_request", 8},
+          {"frame_interval_ms", 1},
+          {"encode_ms", 1}}}
+    };
+    Machine m(p, builtin_registry());
+    Module *jpeg = m.module("JPEG");
+    Module *dma  = m.module("GDMA");
+
+    // A DMA channel from the JPEG request line into RAM, 64 bytes, destination +4 per word.
+    dma->write("regs", 0x04, 4, kRam + 0x400);
+    dma->write("regs", 0x1C, 4, 8);
+    dma->write("regs", 0x00, 4, (63u << 16) | (2u << 6) | (2u << 4) | 0x200 | 2 | 1);
+    // The encoder: byte order natural, frame after 1 ms.
+    jpeg->write("regs", 0x04, 4, (1u << 1) | (1u << 4));
+    jpeg->tick(1'000'000); // start_frame: the request line goes up
+    dma->tick(2'000'000);  // the DMA moves the words
+    CHECK((dma->read("regs", 0x00, 4) & 1) == 0);
+    CHECK(dma->read("regs", 0xE0, 4) == 1);
+    auto bytes = m.cpu().mem_read(kRam + 0x400, 64);
+    CHECK(bytes[0] == 0xFF);
+    CHECK(bytes[1] == 0xD8);
+    CHECK(bytes[2] != 0xAA); // RAM was filled with 0xAA at reset: these bytes were written
+    CHECK(bytes[63] != 0xAA);
+    // 16 words went out of the stream; the rest is still there.
+    CHECK((jpeg->read("regs", 0x20, 4) & 1) == 0);
+}
+
+TEST_CASE("a memory to memory transfer goes through the real bus") {
+    DmaWorld      w({});
+    Machine      &m     = *w.machine;
+    const uint8_t src[] = {1, 2, 3, 4, 5, 6, 7, 8};
+    m.bus().write_memory(kRam + 0x200, src);
+    Module *dma = m.module("GDMA");
+    dma->write("regs", 0x04, 4, kRam + 0x300);
+    dma->write("regs", 0x08, 4, kRam + 0x200);
+    dma->write("regs", 0x00, 4, (7u << 16) | (2u << 6) | (2u << 4) | 0x300 | 2 | 1); // 8 bytes, +4/+4, fin int
+    dma->tick(m.scheduler().now_ns() + 1'000'000);
+    CHECK(word_at(m, kRam + 0x300) == 0x04030201);
+    CHECK(word_at(m, kRam + 0x304) == 0x08070605);
+    CHECK(dma->read("regs", 0xE0, 4) == 1);
+
+    // A transfer that leaves RAM aborts the channel and says so.
+    std::ostringstream out;
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    dma->write("regs", 0x04, 4, kRam + kRamSize - 4);
+    dma->write("regs", 0x00, 4, (7u << 16) | (2u << 6) | (2u << 4) | 0x300 | 1);
+    dma->tick(m.scheduler().now_ns() + 2'000'000);
+    CHECK((dma->read("regs", 0x00, 4) & 1) == 0);
+    CHECK(out.str().find("ch0 aborted: bus error at 0x00410000: nothing writable there") != std::string::npos);
+    Logger::reset_for_tests();
 }

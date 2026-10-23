@@ -21,8 +21,15 @@ std::string usage() {
            "                       bootloader, app, RAM, IRAM) or an address\n"
            "  -d, --debug LIST     Enable debug logging for the comma-separated logger\n"
            "                       names, or `all`; repeatable\n"
-           "  --uart1 SPEC         Host end of UART1: pty (default) or stdio\n"
-           "  --uart2 SPEC         Host end of UART2: pty (default) or stdio\n"
+           "  --uart NAME=SPEC     Host end of the UART module NAME from the profile:\n"
+           "                       pty (default), stdio or a serial device path such as\n"
+           "                       /dev/ttyUSB0 (115200 baud); repeatable\n"
+           "  --uart1 SPEC         Same as --uart UART1=SPEC\n"
+           "  --uart2 SPEC         Same as --uart UART2=SPEC\n"
+           "  --i2c NAME=DEVICE    Attach a device to the I2C controller module NAME of the\n"
+           "                       profile; DEVICE is TYPE or TYPE@ADDRESS (7-bit, 0x08-0x77),\n"
+           "                       for example hi704; repeatable\n"
+           "  --i2c1 DEVICE        Same as --i2c I2C1=DEVICE\n"
            "  -h, --help           Show this help and exit\n"
            "\n"
            "Environment:\n"
@@ -56,7 +63,6 @@ CliOptions parse_cli(int argc, char **argv) {
             return o;
         }
         if (opt == "-p" || opt == "--publish") throw CliError("--publish is not supported in this build");
-        if (opt == "--i2c1") throw CliError("--i2c1 is not supported in this build");
         if (opt == "--load") {
             try {
                 o.loads.push_back(parse_load(value()));
@@ -72,10 +78,21 @@ CliOptions parse_cli(int argc, char **argv) {
                 if (comma > start) o.debug.push_back(csv.substr(start, comma - start));
                 start = comma + 1;
             }
-        } else if (opt == "--uart1") {
-            o.uart1 = value();
-        } else if (opt == "--uart2") {
-            o.uart2 = value();
+        } else if (opt == "--uart") {
+            std::string v  = value();
+            auto        eq = v.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == v.size()) throw CliError("--uart needs NAME=SPEC");
+            o.uart[v.substr(0, eq)] = v.substr(eq + 1);
+        } else if (opt == "--i2c") {
+            std::string v  = value();
+            auto        eq = v.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == v.size())
+                throw CliError("--i2c needs NAME=TYPE[@ADDRESS]");
+            o.i2c.emplace_back(v.substr(0, eq), v.substr(eq + 1));
+        } else if (opt == "--i2c1") {
+            o.i2c.emplace_back("I2C1", value());
+        } else if (opt == "--uart1" || opt == "--uart2") {
+            o.uart["UART" + opt.substr(6)] = value();
         } else if (arg.size() > 1 && arg[0] == '-') {
             throw CliError("unknown option " + opt);
         } else if (have_profile) {

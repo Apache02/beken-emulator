@@ -21,6 +21,7 @@ FIRMWARE=$REPO_ROOT/firmware
 BOOTLOADER_BIN=$FIRMWARE/bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin
 APP_BIN=$FIRMWARE/app_crc.bin
 IRAM_BIN=$FIRMWARE/test_flash_sector_iram.bin
+GDMA_BIN=$FIRMWARE/test_gdma_iram.bin
 CHECK_NAME=${CHECK_NAME:-$(basename "$0" .sh)}
 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/bk7252-check.XXXXXX")
