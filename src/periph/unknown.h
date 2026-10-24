@@ -7,13 +7,15 @@
 #include <string>
 #include <vector>
 
+#include "core/log.h"
 #include "core/module.h"
 
 namespace bk {
 
 // A stand-in for a block of registers that is not emulated yet: 32-bit
-// registers that read back what was written, and a log line (INFO) for every
-// access with the offset, the value and, when an instruction source is given,
+// registers that read back what was written, and a log line (INFO unless the
+// owner picks another level) for every access with the offset, the value and,
+// when an instruction source is given,
 // the address and opcode of the instruction that made it, so the log shows
 // which stand-ins a firmware uses.
 //
@@ -26,7 +28,12 @@ class Unknown : public Module {
     // `size` is in bytes (rounded up to whole words). `reset_words` maps a
     // word-aligned offset inside the block to its start value; throws
     // std::invalid_argument for any other offset. `instruction` may be empty.
-    Unknown(std::string name, uint32_t size, std::map<uint32_t, uint32_t> reset_words, InstructionSource instruction);
+    // `level` is the level of the access log lines.
+    Unknown(std::string                  name,
+            uint32_t                     size,
+            std::map<uint32_t, uint32_t> reset_words,
+            InstructionSource            instruction,
+            Level                        level = Level::Info);
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {
@@ -56,6 +63,7 @@ class Unknown : public Module {
     uint32_t                     size_;
     std::map<uint32_t, uint32_t> reset_words_;
     InstructionSource            instruction_;
+    Level                        level_;
     std::vector<uint32_t>        words_;
 };
 

@@ -396,6 +396,37 @@ TEST_CASE("unknown module type error text") {
                          std::invalid_argument);
 }
 
+TEST_CASE("unknown and wifi_mac take a log_level for their stand-in registers") {
+    std::ostringstream out;
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    Profile    p = chip();
+    ModuleSpec blk{"unknown", "BLK", {{"regs", 0x00802D00}}, {}};
+    ModuleSpec mac{
+        "wifi_mac", "MAC", {{"core", 0xC0000000}, {"pl", 0xC0008000}},
+          {}
+    };
+    blk.params.set("log_level", "debug");
+    mac.params.set("log_level", "Debug");
+    p.modules = {blk, mac};
+    Machine m(p, builtin_registry());
+    m.module("BLK")->write("regs", 0x00, 4, 1);
+    m.module("MAC")->write("pl", 0x100, 4, 2);
+    CHECK(out.str().empty());
+    Logger::set_level("unknown", Level::Debug);
+    m.module("BLK")->write("regs", 0x00, 4, 1);
+    m.module("MAC")->write("pl", 0x100, 4, 2);
+    CHECK(out.str().find("DEBUG emulator.unknown: BLK write +0x0000") != std::string::npos);
+    CHECK(out.str().find("DEBUG emulator.unknown: MAC_PL write +0x0100") != std::string::npos);
+    Logger::reset_for_tests();
+
+    blk.params.set("log_level", "loud");
+    p.modules = {blk};
+    CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()),
+                         "module BLK: log_level must be debug, info, warning or error",
+                         std::invalid_argument);
+}
+
 TEST_CASE("intc must precede user") {
     Profile p = chip();
     p.modules = {timer_spec(), icu_spec()};

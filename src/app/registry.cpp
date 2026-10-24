@@ -141,6 +141,16 @@ std::map<std::string, SignalSpec> signal_specs(const ModuleContext &ctx) {
     return specs;
 }
 
+// The level of a stand-in's access log lines: "debug", "info", "warning" or
+// "error" (any letter case), INFO when not given.
+Level log_level(const ModuleContext &ctx) {
+    const ParamValue *v = ctx.params.find("log_level");
+    if (!v) return Level::Info;
+    std::optional<Level> level = v->string() ? Logger::parse_level(*v->string()) : std::nullopt;
+    if (!level) bad(ctx, "log_level must be debug, info, warning or error");
+    return *level;
+}
+
 } // namespace
 
 ModuleRegistry builtin_registry() {
@@ -213,7 +223,7 @@ ModuleRegistry builtin_registry() {
     r["unknown"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         uint32_t size = u32_param(ctx, "size", 0x100);
         if (size == 0) bad(ctx, "size must not be 0");
-        return std::make_unique<Unknown>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction);
+        return std::make_unique<Unknown>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction, log_level(ctx));
     };
     r["wifi_mac"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         auto line = [&ctx](const char *key) {
@@ -227,8 +237,13 @@ ModuleRegistry builtin_registry() {
                              line("prot_trigger"),
                              line("general")};
         if (!ctx.memory) bad(ctx, "needs a bus master port");
-        return std::make_unique<WifiMac>(
-            ctx.name, ctx.clock, ctx.signal("mac_powered"), std::move(lines), ctx.cpu_instruction, *ctx.memory);
+        return std::make_unique<WifiMac>(ctx.name,
+                                         ctx.clock,
+                                         ctx.signal("mac_powered"),
+                                         std::move(lines),
+                                         ctx.cpu_instruction,
+                                         *ctx.memory,
+                                         log_level(ctx));
     };
     r["wdt"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Wdt>(ctx.name, ctx.clock, ctx.reset_chip, ctx.signal("clock_off"));

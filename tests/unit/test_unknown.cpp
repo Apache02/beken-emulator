@@ -136,6 +136,19 @@ TEST_CASE("unknown logs every access at INFO with pc and opcode") {
     CHECK(f.last().ends_with("BLK read +0x0014 (4 bytes) = 0x00000000  pc 0x00002000 insn 6008"));
 }
 
+TEST_CASE("unknown logs at the level it is given") {
+    std::ostringstream out;
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    Unknown block("BLK", 0x40, {}, nullptr, Level::Debug);
+    block.write("regs", 0x10, 4, 0x55);
+    CHECK(out.str().empty()); // the default level is INFO
+    Logger::set_level("unknown", Level::Debug);
+    block.write("regs", 0x10, 4, 0x55);
+    CHECK(out.str() == "DEBUG emulator.unknown: BLK write +0x0010 (4 bytes) = 0x00000055\n");
+    Logger::reset_for_tests();
+}
+
 TEST_CASE("unknown leaves the pc part out without an instruction") {
     Fixture none(0x100, {}, false);
     none.r(0x20);

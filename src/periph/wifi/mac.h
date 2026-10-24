@@ -38,14 +38,16 @@ class WifiMac : public Module {
         Line tx_rx_timer, tx_rx_misc, rx_trigger, tx_trigger, prot_trigger, general;
     };
 
-    // `powered` may be empty. `instruction` is passed to the stand-in banks.
-    // `memory` is the bus master the frame engine reads descriptors through.
+    // `powered` may be empty. `instruction` and `bank_log_level` (the level of
+    // their access log lines) are passed to the stand-in banks. `memory` is the
+    // bus master the frame engine reads descriptors through.
     WifiMac(std::string                name,
             const Clock               &clock,
             Signal                     powered,
             Lines                      lines,
             Unknown::InstructionSource instruction,
-            BusMemory                 &memory);
+            BusMemory                 &memory,
+            Level                      bank_log_level = Level::Info);
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {

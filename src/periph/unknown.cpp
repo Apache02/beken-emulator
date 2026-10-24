@@ -12,9 +12,10 @@ namespace bk {
 Unknown::Unknown(std::string                  name,
                  uint32_t                     size,
                  std::map<uint32_t, uint32_t> reset_words,
-                 InstructionSource            instruction)
+                 InstructionSource            instruction,
+                 Level                        level)
     : name_(std::move(name)), size_(size), reset_words_(std::move(reset_words)), instruction_(std::move(instruction)),
-      words_((uint64_t{size} + 3) / 4, 0) {
+      level_(level), words_((uint64_t{size} + 3) / 4, 0) {
     for (const auto &[offset, word] : reset_words_) {
         if (offset % 4 != 0 || offset / 4 >= words_.size())
             throw std::invalid_argument(name_ + ": reset word offset " + std::to_string(offset) +
@@ -70,7 +71,7 @@ void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t 
                           insn->opcode);
         }
     }
-    Logger::get("unknown").log(Level::Info, text);
+    Logger::get("unknown").log(level_, text);
 }
 
 } // namespace bk
