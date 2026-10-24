@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <arpa/inet.h>
@@ -7,6 +8,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <memory>
 #include <optional>
 #include <netinet/in.h>
 #include <poll.h>
@@ -227,6 +230,54 @@ TEST_CASE("executable refuses a --uart name the profile does not have") {
     REQUIRE(status.has_value());
     CHECK(*status == 2);
     CHECK(t.err_text == "error: no UART named TIMER0 in profile BK7252\n");
+}
+
+TEST_CASE("executable keeps the flash in a mounted file") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    fs::path disk  = dir.path / "disk.bin";
+    auto     run   = [&] {
+        auto c = std::make_unique<Child>(std::vector<std::string>{
+            "BK7252", "--flash-mount", disk.string(), "--load", "bootloader:" + image.string()});
+        REQUIRE(c->wait_for_output("UART2: ", 2000ms));
+        ::kill(c->pid, SIGKILL); // the file must not depend on a clean exit
+        REQUIRE(c->wait_exit(1000ms).has_value());
+        return c;
+    };
+    auto first = run();
+    CHECK(first->err_text.find("FLASH: created " + disk.string()) != std::string::npos);
+    std::ifstream        in(disk, std::ios::binary);
+    std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    REQUIRE(bytes.size() == 0x200000);
+    std::ifstream        prog(image, std::ios::binary);
+    std::vector<uint8_t> block{std::istreambuf_iterator<char>(prog), std::istreambuf_iterator<char>()};
+    CHECK(std::vector<uint8_t>(bytes.begin(), bytes.begin() + 34) == block);
+    CHECK(std::all_of(bytes.begin() + 34, bytes.end(), [](uint8_t b) { return b == 0xFF; }));
+
+    auto second = run();
+    CHECK(second->err_text.find("FLASH: mounted " + disk.string()) != std::string::npos);
+    CHECK(second->err_text.find("leaves " + disk.string() + " unchanged") != std::string::npos);
+}
+
+TEST_CASE("executable reports bad flash mounts with exit 2") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    auto     error = [&](std::vector<std::string> mount) {
+        std::vector<std::string> args{"BK7252", "--load", "bootloader:" + image.string()};
+        args.insert(args.end(), mount.begin(), mount.end());
+        Child c(args);
+        auto  status = c.wait_exit(2000ms);
+        REQUIRE(status.has_value());
+        CHECK(*status == 2);
+        return c.err_text;
+    };
+    CHECK(error({"--flash-mount", "UART1=" + (dir.path / "a.bin").string()}) ==
+          "error: no flash named UART1 in profile BK7252\n");
+    CHECK(error({"--flash-mount", (dir.path / "a.bin").string(), "--flash-mount", (dir.path / "b.bin").string()})
+              .ends_with("error: --flash-mount given twice for FLASH\n"));
+    std::ofstream(dir.path / "short.bin") << "x";
+    CHECK(error({"--flash-mount", (dir.path / "short.bin").string()}) ==
+          "error: " + (dir.path / "short.bin").string() + ": is 1 bytes, the flash is 2097152\n");
 }
 
 TEST_CASE("executable reports bad I2C requests with exit 2") {

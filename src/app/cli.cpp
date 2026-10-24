@@ -1,9 +1,24 @@
 #include "app/cli.h"
 
+#include <cctype>
 #include <optional>
 #include <string_view>
 
 namespace bk {
+
+namespace {
+
+// The NAME of a NAME=VALUE: the text before the first '=' when it is a module
+// name (letters, digits, underscores), otherwise empty.
+std::string name_prefix(const std::string &v) {
+    auto eq = v.find('=');
+    if (eq == std::string::npos || eq == 0) return {};
+    for (size_t i = 0; i < eq; ++i)
+        if (!std::isalnum(static_cast<unsigned char>(v[i])) && v[i] != '_') return {};
+    return v.substr(0, eq);
+}
+
+} // namespace
 
 std::string usage() {
     return "Usage: bkemu PROFILE --load TARGET:FILE [--load TARGET:FILE]... [options]\n"
@@ -32,6 +47,13 @@ std::string usage() {
            "                       profile; DEVICE is TYPE or TYPE@ADDRESS (7-bit, 0x08-0x77),\n"
            "                       for example hi704; repeatable\n"
            "  --i2c1 DEVICE        Same as --i2c I2C1=DEVICE\n"
+           "  --flash-mount [NAME=]FILE\n"
+           "                       Keep the flash in FILE, like a virtual machine disk:\n"
+           "                       created with the size of the flash if missing, every\n"
+           "                       --load and every write of the firmware goes to it at\n"
+           "                       once. The image has the CRC bytes, as the _crc.bin\n"
+           "                       files. NAME picks a flash module when the profile\n"
+           "                       has several; repeatable for different modules\n"
            "  -p, --publish SPEC   Forward a host port to a port of the firmware on its WiFi\n"
            "                       network: [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]\n"
            "                       (host address 127.0.0.1 and tcp by default; ports\n"
@@ -106,6 +128,12 @@ CliOptions parse_cli(int argc, char **argv) {
             if (eq == std::string::npos || eq == 0 || eq + 1 == v.size())
                 throw CliError("--i2c needs NAME=TYPE[@ADDRESS]");
             o.i2c.emplace_back(v.substr(0, eq), v.substr(eq + 1));
+        } else if (opt == "--flash-mount") {
+            std::string v    = value();
+            std::string name = name_prefix(v);
+            std::string file = name.empty() ? v : v.substr(name.size() + 1);
+            if (file.empty()) throw CliError("--flash-mount needs [NAME=]FILE");
+            o.flash_mounts.emplace_back(std::move(name), std::move(file));
         } else if (opt == "--i2c1") {
             o.i2c.emplace_back("I2C1", value());
         } else if (opt == "--uart1" || opt == "--uart2") {

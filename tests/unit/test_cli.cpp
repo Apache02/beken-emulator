@@ -55,6 +55,7 @@ TEST_CASE("usage text lists every option") {
                                "-p, --publish SPEC",
                                "[HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]",
                                "--ssid NAME",
+                               "--flash-mount [NAME=]FILE",
                                "-h, --help",
                                "BKEMU_PROFILES"})
         CHECK_MESSAGE(u.find(needle) != std::string::npos, needle);
@@ -211,4 +212,30 @@ TEST_CASE("cli i2c errors") {
                       bad);
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--i2c"}) == "--i2c needs a value");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--i2c1"}) == "--i2c1 needs a value");
+}
+
+TEST_CASE("cli flash mount takes FILE or NAME=FILE, order is kept") {
+    CliOptions o = parse({"BK7252",
+                          "--load",
+                          "ram:x.bin",
+                          "--flash-mount",
+                          "disk.bin",
+                          "--flash-mount=FLASH2=b.bin",
+                          "--flash-mount",
+                          "dir/a=b.bin",
+                          "--flash-mount",
+                          "=c.bin"});
+    CHECK(o.flash_mounts == std::vector<std::pair<std::string, std::string>>{
+                                {"",       "disk.bin"   },
+                                {"FLASH2", "b.bin"      },
+                                {"",       "dir/a=b.bin"},
+                                {"",       "=c.bin"     }
+    });
+    CHECK(parse({"BK7252", "--load", "ram:x.bin"}).flash_mounts.empty());
+}
+
+TEST_CASE("cli flash mount errors") {
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--flash-mount", "FLASH="}) == "--flash-mount needs [NAME=]FILE");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--flash-mount", ""}) == "--flash-mount needs [NAME=]FILE");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--flash-mount"}) == "--flash-mount needs a value");
 }

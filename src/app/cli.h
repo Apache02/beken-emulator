@@ -28,6 +28,9 @@ struct CliOptions {
     // (I2C controller module name, device spec TYPE[@ADDRESS]) in command-line
     // order; names and specs are checked later.
     std::vector<std::pair<std::string, std::string>> i2c;
+    // `--flash-mount [NAME=]FILE` in command-line order: (flash module name or
+    // empty for the profile's only flash, file). Names are checked later.
+    std::vector<std::pair<std::string, std::string>> flash_mounts;
     // `-p`/`--publish`, in command-line order.
     std::vector<Publish> publish;
     // `--ssid`: the only network the virtual station joins.
@@ -37,10 +40,12 @@ struct CliOptions {
 
 // PROFILE --load TARGET:FILE [--load ...] [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
 //         [--i2c NAME=TYPE[@ADDRESS]]... [-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]]...
-//         [--ssid NAME]
+//         [--ssid NAME] [--flash-mount [NAME=]FILE]...
 //
 // `--uart1 SPEC` and `--uart2 SPEC` mean `--uart UART1=SPEC` and
 // `--uart UART2=SPEC`; `--i2c1 TYPE[@ADDRESS]` means `--i2c I2C1=TYPE[@ADDRESS]`.
+// In `--flash-mount`, text before the first `=` is a module name only when it
+// is letters, digits and underscores; otherwise the whole value is the file.
 // Long options also take `--opt=value`. `--log-level` is repeatable; LEVEL is
 // debug, info, warning or error in any letter case. Throws CliError, e.g. `at
 // least one --load is required`, `--uart needs NAME=SPEC`, `--log-level needs

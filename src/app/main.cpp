@@ -22,6 +22,7 @@
 #include "core/profile_loader.h"
 #include "i2c/catalog.h"
 #include "net/network.h"
+#include "periph/flash.h"
 #include "periph/i2c1.h"
 #include "periph/uart.h"
 #include "periph/wifi/mac.h"
@@ -62,6 +63,28 @@ std::filesystem::path executable_path(const char *argv0) {
     return std::filesystem::absolute(argv0, ec);
 }
 
+// Mounts `file` on the flash module `name`, or on the profile's only flash
+// module when `name` is empty.
+void mount_flash(bk::Machine &machine, const bk::Profile &profile, const std::string &name, const std::string &file) {
+    bk::Flash *flash = nullptr;
+    if (!name.empty()) {
+        flash = dynamic_cast<bk::Flash *>(machine.module(name));
+        if (!flash) throw std::invalid_argument("no flash named " + name + " in profile " + profile.name);
+    } else {
+        for (const bk::ModuleSpec &m : profile.modules) {
+            auto *f = dynamic_cast<bk::Flash *>(machine.module(m.name));
+            if (!f) continue;
+            if (flash)
+                throw std::invalid_argument("profile " + profile.name +
+                                            " has more than one flash; use --flash-mount NAME=FILE");
+            flash = f;
+        }
+        if (!flash) throw std::invalid_argument("no flash in profile " + profile.name);
+    }
+    if (flash->mounted()) throw std::invalid_argument("--flash-mount given twice for " + flash->name());
+    flash->mount(file);
+}
+
 int run(int argc, char **argv) {
     bk::CliOptions options = bk::parse_cli(argc, argv);
     if (options.help) {
@@ -77,7 +100,9 @@ int run(int argc, char **argv) {
     // The devices outlive the machine that talks to them.
     std::vector<std::pair<std::string, std::unique_ptr<bk::I2cDevice>>> i2c_devices;
     for (const auto &[bus, spec] : options.i2c) i2c_devices.emplace_back(bus, bk::parse_device_spec(spec));
-    bk::Machine                 machine(profile, bk::builtin_registry());
+    bk::Machine machine(profile, bk::builtin_registry());
+    // Files are mounted first, so the loads below go to them.
+    for (const auto &[name, file] : options.flash_mounts) mount_flash(machine, profile, name, file);
     std::vector<bk::LoadAction> loads = bk::plan_loads(machine, options.loads);
     bk::apply(loads);
     for (const auto &[bus, device] : i2c_devices) {

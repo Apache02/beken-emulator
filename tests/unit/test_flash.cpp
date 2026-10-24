@@ -1,12 +1,16 @@
 #include <doctest/doctest.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <unistd.h>
 #include <vector>
 
 #include "core/log.h"
@@ -14,6 +18,7 @@
 #include "periph/flash.h"
 
 using namespace bk;
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -756,4 +761,128 @@ TEST_CASE("load rejects data larger than the flash") {
     std::span<const uint8_t> huge(&b, (size_t{1} << 32) + 4);
     CHECK_THROWS_AS(f.flash.load(0, huge), std::invalid_argument);
     CHECK(f.flash.raw() == std::vector<uint8_t>(0x200000, 0xFF));
+}
+
+namespace {
+
+struct TempFile {
+    fs::path path;
+    TempFile() {
+        static int counter = 0;
+        path               = fs::temp_directory_path() /
+               ("bk7252-flash-test-" + std::to_string(::getpid()) + "-" + std::to_string(counter++) + ".bin");
+        fs::remove(path);
+    }
+    ~TempFile() {
+        std::error_code ec;
+        fs::remove(path, ec);
+    }
+    std::vector<uint8_t> bytes() const {
+        std::ifstream in(path, std::ios::binary);
+        return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    }
+    void put(const std::vector<uint8_t> &data) const {
+        std::ofstream(path, std::ios::binary)
+            .write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
+    }
+};
+
+constexpr uint32_t kSmall = 4 * 34;
+
+} // namespace
+
+TEST_CASE("mount creates a missing file with the present contents") {
+    TempFile file;
+    Fixture  f(kSmall);
+    f.flash.load(0, block(0x10));
+    f.flash.mount(file.path.string());
+    REQUIRE(f.flash.mounted());
+    CHECK(f.flash.mounted()->path() == file.path.string());
+    CHECK(fs::file_size(file.path) == kSmall);
+    CHECK(file.bytes() == f.flash.raw());
+    CHECK(f.flash.raw() == cat(block(0x10), std::vector<uint8_t>(3 * 34, 0xFF)));
+    CHECK(f.count("INFO emulator.flash: flash: created " + file.path.string()) == 1);
+    // The whole XIP window is invalidated.
+    CHECK(f.inv.back() == Call{"xip", 0, 0x1000});
+}
+
+TEST_CASE("mount of an existing file replaces the contents") {
+    TempFile             file;
+    std::vector<uint8_t> image = cat(cat(block(0x20), block(0x40, false)), std::vector<uint8_t>(2 * 34, 0x00));
+    file.put(image);
+    Fixture f(kSmall);
+    f.flash.load(0, block(0x10));
+    CHECK(f.flash.read("xip", 0, 4) == 0x13121110);
+    f.flash.mount(file.path.string());
+    CHECK(f.flash.raw() == image);
+    CHECK(file.bytes() == image);
+    CHECK(f.count("INFO emulator.flash: flash: mounted " + file.path.string()) == 1);
+    // Cached verdicts are forgotten: block 0 reads the file, block 1 has a bad CRC.
+    CHECK(f.flash.read("xip", 0, 4) == 0x23222120);
+    CHECK(f.xip_fault(32).has_value());
+}
+
+TEST_CASE("loads, programs and erases reach the mounted file at once") {
+    TempFile file;
+    Fixture  f(kSmall);
+    f.flash.mount(file.path.string());
+    f.flash.load(34, block(0x30));
+    std::vector<uint8_t> bytes = file.bytes();
+    CHECK(bytes == f.flash.raw());
+    CHECK(std::vector<uint8_t>(bytes.begin() + 34, bytes.begin() + 68) == block(0x30));
+    for (int i = 0; i < 8; ++i) f.w(kWriteData, 0);
+    f.cmd(PP, 0);
+    CHECK(file.bytes()[0] == 0x00);
+    CHECK(file.bytes() == f.flash.raw());
+    f.cmd(SE, 0);
+    CHECK(file.bytes() == std::vector<uint8_t>(kSmall, 0xFF));
+}
+
+TEST_CASE("the mounted file keeps the contents for the next mount") {
+    TempFile file;
+    {
+        Fixture f(kSmall);
+        f.flash.mount(file.path.string());
+        f.flash.load(68, block(0x50));
+    }
+    Fixture f(kSmall);
+    f.flash.mount(file.path.string());
+    std::vector<uint8_t> raw = f.flash.raw();
+    CHECK(std::vector<uint8_t>(raw.begin() + 68, raw.begin() + 102) == block(0x50));
+}
+
+TEST_CASE("a load that changes nothing in the mounted file says so") {
+    TempFile file;
+    Fixture  f(kSmall);
+    f.flash.mount(file.path.string());
+    f.flash.load(34, block(0x30));
+    CHECK(f.count("unchanged") == 0);
+    f.inv.clear();
+    f.flash.load(34, block(0x30));
+    CHECK(f.count("INFO emulator.flash: load of 34 bytes at 0x22 leaves " + file.path.string() + " unchanged") == 1);
+    CHECK(f.inv.empty());
+    // Without a file nothing is said.
+    Fixture plain(kSmall);
+    plain.flash.load(0, std::vector<uint8_t>(34, 0xFF));
+    CHECK(plain.out.str().empty());
+}
+
+TEST_CASE("mount refuses a file of another size, one in use and a second mount") {
+    TempFile file;
+    file.put(std::vector<uint8_t>(kSmall + 1, 0xFF));
+    Fixture f(kSmall);
+    CHECK_THROWS_WITH_AS(f.flash.mount(file.path.string()),
+                         (file.path.string() + ": is 137 bytes, the flash is 136").c_str(),
+                         std::runtime_error);
+    CHECK_FALSE(f.flash.mounted());
+    CHECK(fs::file_size(file.path) == kSmall + 1);
+
+    TempFile other;
+    f.flash.mount(other.path.string());
+    CHECK_THROWS_AS(f.flash.mount(file.path.string()), std::logic_error);
+    Fixture second(kSmall);
+    CHECK_THROWS_WITH_AS(second.flash.mount(other.path.string()),
+                         (other.path.string() + ": is already in use").c_str(),
+                         std::runtime_error);
+    CHECK_THROWS_AS(second.flash.mount("/nonexistent-dir/flash.bin"), std::runtime_error);
 }

@@ -69,6 +69,25 @@ to the I2C controller module `NAME` (`--i2c1 TYPE` is the shorthand for
 `error`) of one logger, for example `--log-level bus=debug`, or of all of them with
 `--log-level all=debug`; later options win. The emulator runs until it receives SIGINT or SIGTERM.
 
+### Flash file
+
+Without options the flash lives in memory and is gone when the emulator stops.
+`--flash-mount FILE` keeps it in `FILE`, like a virtual machine disk:
+
+```
+build/bkemu BK7252 --flash-mount flash.bin --load bootloader:... --load app:...
+build/bkemu BK7252 --flash-mount flash.bin --load bootloader:...
+```
+
+A missing file is created with the size of the flash (erased, all `0xFF`); an
+existing one must have that size and is what the flash holds at start. The
+loads are applied after the file is mounted, and every load, page program and
+erase is written to the file at once, so it survives even a killed emulator. A
+load that finds its image in the file already says so in the log. The file is
+the physical image with the CRC bytes, like the `_crc.bin` files, and is locked
+while an emulator uses it. `--flash-mount NAME=FILE` picks the flash module
+`NAME` when a profile has more than one.
+
 ### WiFi
 
 The WiFi MAC (module `MAC`) is an open access point to the firmware. With

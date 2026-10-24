@@ -30,6 +30,7 @@ add_library(bk_core STATIC
         src/core/machine.cpp
         src/core/profile_loader.cpp
         src/core/loader.cpp
+        src/core/mapped_file.cpp
         src/app/registry.cpp
         src/app/cli.cpp
         src/app/endpoints.cpp

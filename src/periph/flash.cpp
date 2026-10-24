@@ -64,8 +64,8 @@ Logger &log() { return Logger::get("flash"); }
 
 Flash::Flash(std::string name, uint32_t size, uint32_t jedec, Options options)
     : name_(std::move(name)), size_(size), jedec_(jedec), blocks_(size / kBlockRaw),
-      window_((blocks_ * kBlockData + kPage - 1) / kPage * kPage), raw_(size, 0xFF), verdicts_(blocks_),
-      options_(std::move(options)), words_(options_.words), conf_(options_.conf_reset),
+      window_((blocks_ * kBlockData + kPage - 1) / kPage * kPage), memory_(size, 0xFF), raw_(memory_),
+      verdicts_(blocks_), options_(std::move(options)), words_(options_.words), conf_(options_.conf_reset),
       m_value_(options_.m_value_reset) {
     if (options_.read_ptr_reset >= kFifoWords)
         throw std::invalid_argument(name_ + ": the read FIFO pointer reset must be 0-7");
@@ -319,10 +319,29 @@ void Flash::load(uint32_t offset, std::span<const uint8_t> data) {
                                            size_));
     uint32_t size = static_cast<uint32_t>(data.size());
     check_load(offset, size);
+    if (file_ && std::equal(data.begin(), data.end(), raw_.begin() + offset)) {
+        log().log(Level::Info,
+                  format("load of %u bytes at 0x%X leaves %s unchanged", size, offset, file_->path().c_str()));
+        return;
+    }
     std::copy(data.begin(), data.end(), raw_.begin() + offset);
     // Only blocks covered completely lose their cached verdict.
     uint32_t end = std::min((offset + size) / kBlockRaw, blocks_);
     for (uint32_t n = offset / kBlockRaw; n < end; ++n) verdicts_[n].reset();
+    invalidate_window();
+}
+
+void Flash::mount(const std::string &path) {
+    if (file_) throw std::logic_error(name_ + ": " + file_->path() + " is mounted already");
+    auto file = std::make_unique<MappedFile>(path, size_);
+    if (file->created()) std::copy(raw_.begin(), raw_.end(), file->bytes().begin());
+    log().log(Level::Info, format("%s: %s %s", name_.c_str(), file->created() ? "created" : "mounted", path.c_str()));
+    file_ = std::move(file);
+    raw_  = file_->bytes();
+    memory_.clear();
+    memory_.shrink_to_fit();
+    std::fill(verdicts_.begin(), verdicts_.end(), std::nullopt);
+    last_alert_block_.reset();
     invalidate_window();
 }
 

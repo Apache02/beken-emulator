@@ -4,11 +4,13 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
 #include <vector>
 
+#include "core/mapped_file.h"
 #include "core/module.h"
 
 namespace bk {
@@ -70,7 +72,16 @@ class Flash : public Module {
     void load(uint32_t offset, std::span<const uint8_t> data) override;
 
     // Physical contents, CRC bytes included.
-    std::vector<uint8_t> raw() const { return raw_; }
+    std::vector<uint8_t> raw() const { return {raw_.begin(), raw_.end()}; }
+
+    // Keeps the physical contents in the file `path` from now on: every load,
+    // program and erase is written to it at once. A new file is created with
+    // the present contents; an existing one must be the size of the flash and
+    // replaces them. Throws std::runtime_error when the file cannot be used and
+    // std::logic_error when a file is mounted already.
+    void mount(const std::string &path);
+    // The mounted file, or nullptr.
+    const MappedFile *mounted() const { return file_.get(); }
 
   private:
     bool crc_en() const { return (conf_ & kCrcEn) != 0; }
@@ -88,9 +99,11 @@ class Flash : public Module {
     // matching part of the XIP window.
     void touched(uint32_t start, uint32_t end);
 
-    std::string          name_;
-    uint32_t             size_, jedec_, blocks_, window_;
-    std::vector<uint8_t> raw_;
+    std::string                 name_;
+    uint32_t                    size_, jedec_, blocks_, window_;
+    std::vector<uint8_t>        memory_; // the store while no file is mounted
+    std::unique_ptr<MappedFile> file_;
+    std::span<uint8_t>          raw_; // the store: memory_ or the mounted file
     // Cached CRC verdict per block: unknown until first checked.
     std::vector<std::optional<bool>> verdicts_;
     std::optional<uint32_t>          last_alert_block_;
