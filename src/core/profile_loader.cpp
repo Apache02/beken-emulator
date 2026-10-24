@@ -231,7 +231,7 @@ Profile load_profile(const std::string &name, const std::filesystem::path &dir) 
 }
 
 std::filesystem::path profile_dir(const std::filesystem::path &exe) {
-    const char *env = std::getenv("BK7252_PROFILES");
+    const char *env = std::getenv("BKEMU_PROFILES");
     if (env && *env) return env;
     return exe.parent_path().parent_path() / "profiles";
 }

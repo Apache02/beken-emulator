@@ -41,18 +41,38 @@ TEST_CASE_FIXTURE(LogFixture, "line format") {
     CHECK(out.str() == "INFO emulator.bus: x\n");
 }
 
-TEST_CASE_FIXTURE(LogFixture, "debug csv") {
-    bk::Logger::set_debug("wdt,flash");
+TEST_CASE_FIXTURE(LogFixture, "a named logger gets its own level") {
+    bk::Logger::set_level("wdt", bk::Level::Debug);
+    bk::Logger::set_level("flash", bk::Level::Error);
     bk::Logger::get("wdt").log(bk::Level::Debug, "d");
+    bk::Logger::get("flash").log(bk::Level::Warning, "hidden");
     bk::Logger::get("bus").log(bk::Level::Debug, "hidden");
     bk::Logger::get("bus").log(bk::Level::Info, "shown");
     CHECK(out.str() == "DEBUG emulator.wdt: d\nINFO emulator.bus: shown\n");
 }
 
-TEST_CASE_FIXTURE(LogFixture, "debug all") {
-    bk::Logger::set_debug("all");
+TEST_CASE_FIXTURE(LogFixture, "all sets the level every other logger inherits") {
+    bk::Logger::set_level("all", bk::Level::Debug);
     bk::Logger::get("bus").log(bk::Level::Debug, "d");
     CHECK(out.str() == "DEBUG emulator.bus: d\n");
+    out.str("");
+    bk::Logger::set_level("unknown", bk::Level::Warning); // its own level wins over all
+    bk::Logger::get("unknown").log(bk::Level::Info, "hidden");
+    bk::Logger::get("bus").log(bk::Level::Debug, "d");
+    CHECK(out.str() == "DEBUG emulator.bus: d\n");
+    bk::Logger::set_level("all", bk::Level::Error);
+    bk::Logger::get("bus").log(bk::Level::Warning, "hidden");
+    CHECK(out.str() == "DEBUG emulator.bus: d\n");
+}
+
+TEST_CASE_FIXTURE(LogFixture, "level names in any letter case") {
+    CHECK(bk::Logger::parse_level("debug") == bk::Level::Debug);
+    CHECK(bk::Logger::parse_level("DEBUG") == bk::Level::Debug);
+    CHECK(bk::Logger::parse_level("Info") == bk::Level::Info);
+    CHECK(bk::Logger::parse_level("WARNING") == bk::Level::Warning);
+    CHECK(bk::Logger::parse_level("error") == bk::Level::Error);
+    CHECK_FALSE(bk::Logger::parse_level("warn").has_value());
+    CHECK_FALSE(bk::Logger::parse_level("").has_value());
 }
 
 TEST_CASE_FIXTURE(LogFixture, "colour lines") {

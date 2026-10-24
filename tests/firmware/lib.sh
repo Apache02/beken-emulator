@@ -16,7 +16,7 @@
 
 FW_DIR_LIB=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "$FW_DIR_LIB/../.." && pwd)
-EMULATOR=${BK7252_EXE:-$REPO_ROOT/build/bkemu}
+EMULATOR=${BKEMU_EXE:-$REPO_ROOT/build/bkemu}
 FIRMWARE=$REPO_ROOT/firmware
 BOOTLOADER_BIN=$FIRMWARE/bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin
 APP_BIN=$FIRMWARE/app_crc.bin

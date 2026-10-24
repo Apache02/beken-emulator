@@ -1,6 +1,6 @@
 // The emulator executable: builds a machine from a profile, loads images,
-// attaches the requested I2C devices, connects every UART to a host endpoint
-// and runs until stopped.
+// attaches the requested I2C devices and the WiFi network, connects every UART
+// to a host endpoint and runs until stopped.
 
 #include <csignal>
 #include <cstdlib>
@@ -21,8 +21,10 @@
 #include "core/machine.h"
 #include "core/profile_loader.h"
 #include "i2c/catalog.h"
+#include "net/network.h"
 #include "periph/i2c1.h"
 #include "periph/uart.h"
+#include "periph/wifi/mac.h"
 
 namespace {
 
@@ -69,7 +71,7 @@ int run(int argc, char **argv) {
     bk::Logger::configure(
         std::cerr,
         bk::colour_enabled(::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR"), std::getenv("FORCE_COLOR")));
-    for (const std::string &d : options.debug) bk::Logger::set_debug(d);
+    for (const auto &[name, level] : options.log_levels) bk::Logger::set_level(name, level);
 
     bk::Profile profile = bk::load_profile(options.profile, bk::profile_dir(executable_path(argv[0])));
     // The devices outlive the machine that talks to them.
@@ -82,6 +84,20 @@ int run(int argc, char **argv) {
         auto *controller = dynamic_cast<bk::I2c1 *>(machine.module(bus));
         if (!controller) throw std::invalid_argument("no I2C bus named " + bus + " in profile " + profile.name);
         controller->attach(device.get());
+    }
+
+    // Declared after the machine, so it goes first; the MAC is detached from it
+    // before that.
+    std::unique_ptr<bk::Network> network;
+    bk::WifiMac                 *mac = nullptr;
+    if (!options.publish.empty() || options.ssid) {
+        mac = dynamic_cast<bk::WifiMac *>(machine.module("MAC"));
+        if (!mac)
+            throw std::invalid_argument(std::string(options.publish.empty() ? "--ssid" : "--publish") +
+                                        " needs a profile with a WiFi MAC module named MAC");
+        network = std::make_unique<bk::Network>(options.publish, bk::Network::kDefaultMac, options.ssid);
+        mac->attach(network.get());
+        for (const bk::Publish &p : network->addresses()) std::cout << bk::describe(p) << std::endl;
     }
 
     // A write to a closed stdout must not kill the emulator.
@@ -110,6 +126,10 @@ int run(int argc, char **argv) {
     machine.cpu().reset(0);
     machine.scheduler().run_forever([] { return g_stop != 0; });
 
+    if (network) {
+        mac->attach(nullptr);
+        network->close();
+    }
     // Detach before the endpoints go away.
     for (const auto &[name, endpoint] : endpoints)
         if (auto *uart = dynamic_cast<bk::Uart *>(machine.module(name))) uart->attach(nullptr);

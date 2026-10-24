@@ -28,9 +28,11 @@ class Logger {
 
     // Sets the stream shared by all loggers (default std::cerr, no colour).
     static void configure(std::ostream &out, bool colour);
-    // "all" sets the root to Debug; otherwise a comma-separated list of
-    // suffixes, each set to Debug.
-    static void set_debug(std::string_view csv);
+    // Sets the level of the logger with this suffix; "all" sets the root, which
+    // every logger without a level of its own inherits.
+    static void set_level(std::string_view suffix, Level level);
+    // "debug", "info", "warning" or "error" in any letter case.
+    static std::optional<Level> parse_level(std::string_view text);
     // Restores default levels, stream and warn_once state. Tests only.
     static void reset_for_tests();
 

@@ -1,5 +1,6 @@
 #include "core/log.h"
 
+#include <cctype>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -78,18 +79,21 @@ void Logger::configure(std::ostream &out, bool colour) {
     state().colour = colour;
 }
 
-void Logger::set_debug(std::string_view csv) {
-    if (csv == "all") {
-        state().root = Level::Debug;
-        return;
-    }
-    while (!csv.empty()) {
-        size_t           comma = csv.find(',');
-        std::string_view item  = csv.substr(0, comma);
-        if (!item.empty()) get(item).level_ = Level::Debug;
-        if (comma == std::string_view::npos) break;
-        csv.remove_prefix(comma + 1);
-    }
+void Logger::set_level(std::string_view suffix, Level level) {
+    if (suffix == "all")
+        state().root = level;
+    else
+        get(suffix).level_ = level;
+}
+
+std::optional<Level> Logger::parse_level(std::string_view text) {
+    std::string lower(text);
+    for (char &c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "debug") return Level::Debug;
+    if (lower == "info") return Level::Info;
+    if (lower == "warning") return Level::Warning;
+    if (lower == "error") return Level::Error;
+    return std::nullopt;
 }
 
 void Logger::reset_for_tests() {

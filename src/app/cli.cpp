@@ -19,8 +19,10 @@ std::string usage() {
            "  --load TARGET:FILE   Load an image before start; repeatable, at least one is\n"
            "                       required. TARGET is a profile alias (for example\n"
            "                       bootloader, app, RAM, IRAM) or an address\n"
-           "  -d, --debug LIST     Enable debug logging for the comma-separated logger\n"
-           "                       names, or `all`; repeatable\n"
+           "  --log-level NAME=LEVEL\n"
+           "                       Set the level of the logger NAME (for example bus,\n"
+           "                       net.stack) or of every logger with `all`; LEVEL is\n"
+           "                       debug, info, warning or error; repeatable\n"
            "  --uart NAME=SPEC     Host end of the UART module NAME from the profile:\n"
            "                       pty (default), stdio or a serial device path such as\n"
            "                       /dev/ttyUSB0 (115200 baud); repeatable\n"
@@ -30,10 +32,16 @@ std::string usage() {
            "                       profile; DEVICE is TYPE or TYPE@ADDRESS (7-bit, 0x08-0x77),\n"
            "                       for example hi704; repeatable\n"
            "  --i2c1 DEVICE        Same as --i2c I2C1=DEVICE\n"
+           "  -p, --publish SPEC   Forward a host port to a port of the firmware on its WiFi\n"
+           "                       network: [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]\n"
+           "                       (host address 127.0.0.1 and tcp by default; ports\n"
+           "                       1-65535); needs a MAC module; repeatable\n"
+           "  --ssid NAME          Join only the access point NAME (default: any open\n"
+           "                       network); also connects the WiFi MAC to the host\n"
            "  -h, --help           Show this help and exit\n"
            "\n"
            "Environment:\n"
-           "  BK7252_PROFILES      Directory with the profile files\n"
+           "  BKEMU_PROFILES       Directory with the profile files\n"
            "                       (default: <executable directory>/../profiles)\n"
            "  NO_COLOR             Turn log colour off\n"
            "  FORCE_COLOR          Turn log colour on even when stderr is not a terminal\n";
@@ -62,22 +70,31 @@ CliOptions parse_cli(int argc, char **argv) {
             o.help = true;
             return o;
         }
-        if (opt == "-p" || opt == "--publish") throw CliError("--publish is not supported in this build");
-        if (opt == "--load") {
+        if (opt == "-p" || opt == "--publish") {
+            try {
+                o.publish.push_back(parse_publish(value()));
+            } catch (const ForwardError &e) {
+                throw CliError(e.what());
+            }
+        } else if (opt == "--ssid") {
+            std::string name = value();
+            // An 802.11 SSID is 1 to 32 bytes.
+            if (name.empty() || name.size() > 32) throw CliError("--ssid needs a name of 1 to 32 bytes");
+            o.ssid = std::move(name);
+        } else if (opt == "--load") {
             try {
                 o.loads.push_back(parse_load(value()));
             } catch (const LoadError &e) {
                 throw CliError(e.what());
             }
-        } else if (opt == "-d" || opt == "--debug") {
-            std::string csv   = value();
-            size_t      start = 0;
-            while (start <= csv.size()) {
-                size_t comma = csv.find(',', start);
-                if (comma == std::string::npos) comma = csv.size();
-                if (comma > start) o.debug.push_back(csv.substr(start, comma - start));
-                start = comma + 1;
-            }
+        } else if (opt == "--log-level") {
+            std::string v  = value();
+            auto        eq = v.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 == v.size())
+                throw CliError("--log-level needs NAME=LEVEL");
+            std::optional<Level> level = Logger::parse_level(std::string_view(v).substr(eq + 1));
+            if (!level) throw CliError("bad log level '" + v.substr(eq + 1) + "' (want debug, info, warning or error)");
+            o.log_levels.emplace_back(v.substr(0, eq), *level);
         } else if (opt == "--uart") {
             std::string v  = value();
             auto        eq = v.find('=');

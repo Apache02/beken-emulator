@@ -352,7 +352,7 @@ TEST_CASE("i2c1 logs config writes, phases and the interrupt line at DEBUG") {
     std::ostringstream out;
     Logger::reset_for_tests();
     Logger::configure(out, false);
-    Logger::set_debug("i2c");
+    Logger::set_level("i2c", Level::Debug);
     {
         Fixture f;
         f.w(kData, 0x60);

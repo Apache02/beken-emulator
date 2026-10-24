@@ -222,8 +222,9 @@ regs = 0x10E00000
 [module.params]
 size = 64
 
-# Only the monotonic counters are emulated so far; the rest of the MAC
-# registers are stand-ins. The counters run while SCTRL's MAC power key is set.
+# The counters, state machine, interrupts and timers are emulated; the rest of
+# the MAC registers are stand-ins. The counters run while SCTRL's MAC power key
+# is set. The ICU lines are the FIQ_MAC_* sources of the SDK.
 [[module]]
 type = "wifi_mac"
 name = "MAC"
@@ -232,6 +233,8 @@ core = 0xC0000000
 pl = 0xC0008000
 [module.params]
 mac_powered_signal = "SCTRL.mac_powered"
+intc = "ICU"
+irq = { tx_rx_timer = 17, tx_rx_misc = 18, rx_trigger = 19, tx_trigger = 20, prot_trigger = 21, general = 22 }
 
 [[module]]
 type = "unknown"

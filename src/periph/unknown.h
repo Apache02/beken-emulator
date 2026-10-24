@@ -41,6 +41,14 @@ class Unknown : public Module {
     void write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) override;
     void reset() override;
 
+    // Unlogged word access for an owner that serves some registers itself.
+    // `offset` is word-aligned; a peek outside the block returns 0 and a poke
+    // there is dropped.
+    uint32_t peek(uint32_t offset) const { return offset / 4 < words_.size() ? words_[offset / 4] : 0; }
+    void     poke(uint32_t offset, uint32_t value) {
+        if (offset / 4 < words_.size()) words_[offset / 4] = value;
+    }
+
   private:
     void report(const char *what, uint32_t offset, uint32_t size, uint32_t value);
 

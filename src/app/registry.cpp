@@ -22,7 +22,7 @@
 #include "periph/trng.h"
 #include "periph/uart.h"
 #include "periph/unknown.h"
-#include "periph/wifi_mac.h"
+#include "periph/wifi/mac.h"
 #include "periph/wdt.h"
 
 namespace bk {
@@ -216,7 +216,19 @@ ModuleRegistry builtin_registry() {
         return std::make_unique<Unknown>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction);
     };
     r["wifi_mac"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
-        return std::make_unique<WifiMac>(ctx.name, ctx.clock, ctx.signal("mac_powered"), ctx.cpu_instruction);
+        auto line = [&ctx](const char *key) {
+            auto it = ctx.irqs.find(key);
+            return it == ctx.irqs.end() ? Line() : it->second;
+        };
+        WifiMac::Lines lines{line("tx_rx_timer"),
+                             line("tx_rx_misc"),
+                             line("rx_trigger"),
+                             line("tx_trigger"),
+                             line("prot_trigger"),
+                             line("general")};
+        if (!ctx.memory) bad(ctx, "needs a bus master port");
+        return std::make_unique<WifiMac>(
+            ctx.name, ctx.clock, ctx.signal("mac_powered"), std::move(lines), ctx.cpu_instruction, *ctx.memory);
     };
     r["wdt"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Wdt>(ctx.name, ctx.clock, ctx.reset_chip, ctx.signal("clock_off"));

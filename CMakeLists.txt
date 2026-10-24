@@ -47,7 +47,14 @@ add_library(bk_core STATIC
         src/periph/trng.cpp
         src/periph/uart.cpp
         src/periph/unknown.cpp
-        src/periph/wifi_mac.cpp
+        src/periph/wifi/frame_engine.cpp
+        src/periph/wifi/mac.cpp
+        src/net/packets.cpp
+        src/net/stack.cpp
+        src/net/tcp_flow.cpp
+        src/net/station.cpp
+        src/net/forwarder.cpp
+        src/net/network.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/generated/default_picture.cpp"
         src/periph/wdt.cpp)
 target_include_directories(bk_core PUBLIC src)
@@ -67,6 +74,13 @@ add_executable(unit_tests
         tests/unit/test_gdma.cpp
         tests/unit/test_jpeg.cpp
         tests/unit/test_wifi_mac.cpp
+        tests/unit/test_wifi_frame_engine.cpp
+        tests/unit/test_station.cpp
+        tests/unit/test_packets.cpp
+        tests/unit/test_stack.cpp
+        tests/unit/test_tcp_flow.cpp
+        tests/unit/test_forwarder.cpp
+        tests/unit/test_network.cpp
         tests/unit/test_i2c1.cpp
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp
@@ -87,7 +101,7 @@ add_executable(unit_tests
 target_compile_options(unit_tests PRIVATE -Wall -Wextra)
 target_compile_definitions(unit_tests PRIVATE
         BK_PROFILES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/profiles"
-        BK7252_EXE="$<TARGET_FILE:bkemu>")
+        BKEMU_EXE="$<TARGET_FILE:bkemu>")
 add_dependencies(unit_tests bkemu)
 target_link_libraries(unit_tests PRIVATE bk_core doctest::doctest)
 add_test(NAME unit COMMAND unit_tests)
@@ -99,4 +113,4 @@ set_tests_properties(firmware PROPERTIES
         LABELS firmware
         SKIP_RETURN_CODE 77
         TIMEOUT 900
-        ENVIRONMENT "BK7252_EXE=$<TARGET_FILE:bkemu>")
+        ENVIRONMENT "BKEMU_EXE=$<TARGET_FILE:bkemu>")

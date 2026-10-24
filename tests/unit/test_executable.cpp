@@ -2,15 +2,18 @@
 
 #include <chrono>
 #include <csignal>
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <netinet/in.h>
 #include <poll.h>
 #include <pty.h>
 #include <string>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -67,12 +70,12 @@ struct Child {
     std::string out_text, err_text;
     termios     initial{}; // the pty's modes before the emulator started
 
-    explicit Child(std::vector<std::string> args, bool stdio_on_tty = false) {
+    explicit Child(std::vector<std::string> args, bool stdio_on_tty = false, std::string profiles = BK_PROFILES_DIR) {
         REQUIRE(::openpty(&master, &slave, nullptr, nullptr, nullptr) == 0);
         REQUIRE(::tcgetattr(slave, &initial) == 0);
         int e[2];
         REQUIRE(::pipe(e) == 0);
-        args.insert(args.begin(), BK7252_EXE);
+        args.insert(args.begin(), BKEMU_EXE);
         pid = ::fork();
         REQUIRE(pid >= 0);
         if (pid == 0) {
@@ -84,7 +87,7 @@ struct Child {
             std::vector<char *> argv;
             for (auto &a : args) argv.push_back(a.data());
             argv.push_back(nullptr);
-            ::setenv("BK7252_PROFILES", BK_PROFILES_DIR, 1);
+            ::setenv("BKEMU_PROFILES", profiles.c_str(), 1);
             ::execv(argv[0], argv.data());
             ::_exit(127);
         }
@@ -245,6 +248,82 @@ TEST_CASE("executable reports bad I2C requests with exit 2") {
     CHECK(error({"--i2c", "UART1=hi704"}) == "error: no I2C bus named UART1 in profile BK7252\n");
     CHECK(error({"--i2c1", "hi704", "--i2c1", "hi704"}) ==
           "error: I2C1 address 0x30 is used twice (hi704 and hi704)\n");
+}
+
+TEST_CASE("executable reports bad publish requests with exit 2") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    auto     error = [&](std::vector<std::string> extra, const std::string &profile = "BK7252") {
+        std::vector<std::string> args{profile, "--load", "bootloader:" + image.string()};
+        args.insert(args.end(), extra.begin(), extra.end());
+        Child c(args);
+        auto  status = c.wait_exit(2000ms);
+        REQUIRE(status.has_value());
+        CHECK(*status == 2);
+        return c.err_text;
+    };
+    CHECK(error({"-p", "http"}) ==
+          "error: bad --publish 'http' (want [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp], ports 1-65535)\n");
+    CHECK(error({"--ssid", ""}) == "error: --ssid needs a name of 1 to 32 bytes\n");
+
+    // A port somebody else listens on.
+    int taken = ::socket(AF_INET, SOCK_STREAM, 0);
+    REQUIRE(taken >= 0);
+    sockaddr_in sa{};
+    sa.sin_family      = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    REQUIRE(::bind(taken, reinterpret_cast<sockaddr *>(&sa), sizeof sa) == 0);
+    REQUIRE(::listen(taken, 1) == 0);
+    socklen_t len = sizeof sa;
+    REQUIRE(::getsockname(taken, reinterpret_cast<sockaddr *>(&sa), &len) == 0);
+    std::string port = std::to_string(ntohs(sa.sin_port));
+    CHECK(error({"-p", port + ":80"}) ==
+          "error: cannot publish 127.0.0.1:" + port + " to guest port 80/tcp: Address already in use\n");
+    ::close(taken);
+}
+
+TEST_CASE("executable publish needs a MAC module") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    // A profile without a WiFi MAC.
+    fs::path profiles = dir.path / "profiles";
+    fs::create_directories(profiles);
+    std::ofstream(profiles / "NOMAC.toml") << "name = \"NOMAC\"\ninsns_per_us = 100\n"
+                                              "peripheral_window = [0x00800000, 0x00100000]\n"
+                                              "[[memory]]\nname = \"RAM\"\nbase = 0x00400000\nsize = 0x1000\n"
+                                              "[alias]\nRAM = 0x00400000\n";
+    auto error = [&](const char *flag, const char *value) {
+        Child c({"NOMAC", "--load", "RAM:" + image.string(), flag, value}, false, profiles.string());
+        auto  status = c.wait_exit(2000ms);
+        REQUIRE(status.has_value());
+        CHECK(*status == 2);
+        return c.err_text;
+    };
+    CHECK(error("--publish", "8080:80") == "error: --publish needs a profile with a WiFi MAC module named MAC\n");
+    CHECK(error("--ssid", "cam") == "error: --ssid needs a profile with a WiFi MAC module named MAC\n");
+}
+
+TEST_CASE("executable publishes a port, prints it and stops on SIGTERM") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    Child    c({"BK7252",
+                "--load",
+                "bootloader:" + image.string(),
+                "-p",
+                "127.0.0.1:40111:80",
+                "-p",
+                "127.0.0.1:40112:53/udp"});
+    // One line per publish, after the network is created and before the UARTs.
+    bool listed = c.wait_for_output("udp 127.0.0.1:40112 -> guest port 53", 5000ms);
+    // If a port is taken on this machine, the emulator says so here.
+    INFO(c.err_text);
+    CHECK(listed);
+    CHECK(c.out_text.find("tcp 127.0.0.1:40111 -> guest port 80") != std::string::npos);
+    CHECK(c.out_text.find("tcp 127.0.0.1:40111") < c.out_text.find("udp 127.0.0.1:40112"));
+    ::kill(c.pid, SIGTERM);
+    auto status = c.wait_exit(3000ms);
+    REQUIRE(status.has_value());
+    CHECK(*status == 0);
 }
 
 TEST_CASE("executable stops on SIGINT while running") { stops_cleanly({kBranchSelf}, SIGINT); }

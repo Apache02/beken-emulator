@@ -8,7 +8,7 @@ BKLOADER=/path/to/bkloader tests/firmware/run_all.sh
 ```
 
 or through CTest (`ctest -L firmware` in the build directory, which also sets
-`BK7252_EXE` to the built executable). The scripts work from any directory.
+`BKEMU_EXE` to the built executable). The scripts work from any directory.
 
 Exit statuses: `run_all.sh` exits with 77 (CTest reports the test as skipped)
 when `BKLOADER` is unset or not executable, or when one of the images is

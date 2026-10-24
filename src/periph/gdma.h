@@ -37,11 +37,11 @@ class Gdma : public Module {
             {"regs", 0x200}
         };
     }
-    uint32_t                     read(const std::string &range, uint32_t offset, uint32_t size) override;
-    void                         write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) override;
-    void                         tick(uint64_t now_ns) override;
-    std::optional<uint64_t>      next_event_ns() const override;
-    void                         reset() override;
+    uint32_t                read(const std::string &range, uint32_t offset, uint32_t size) override;
+    void                    write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) override;
+    void                    tick(uint64_t now_ns) override;
+    std::optional<uint64_t> next_event_ns() const override;
+    void                    reset() override;
     std::shared_ptr<RequestLine> request_line(unsigned n) override;
 
   private:
@@ -49,14 +49,14 @@ class Gdma : public Module {
     // line source has no word and carry on later.
     class Mover {
       public:
-        Mover(BusMemory                  &memory,
-              uint64_t                    src,
-              uint64_t                    dst,
-              uint32_t                    length,
-              unsigned                    src_width,
-              unsigned                    dst_width,
-              bool                        src_inc,
-              bool                        dst_inc,
+        Mover(BusMemory                   &memory,
+              uint64_t                     src,
+              uint64_t                     dst,
+              uint32_t                     length,
+              unsigned                     src_width,
+              unsigned                     dst_width,
+              bool                         src_inc,
+              bool                         dst_inc,
               std::shared_ptr<RequestLine> port = {});
 
         bool done() const { return writes >= writes_total; }
@@ -83,10 +83,10 @@ class Gdma : public Module {
         std::array<uint32_t, 2>      pause{};
         bool                         running = false, stalled = false;
         uint64_t                     start_ns = 0, end_ns = 0, half_ns = 0;
-        uint64_t                     writes = 0;
+        uint64_t                     writes       = 0;
         bool                         half_pending = false;
         uint32_t                     fin_count = 0, half_count = 0;
-        std::unique_ptr<Mover>       mover; // kept after a stop: it holds the write position
+        std::unique_ptr<Mover>       mover;         // kept after a stop: it holds the write position
         bool                         paced = false; // a request line decides when words move
         std::shared_ptr<RequestLine> port;
         uint64_t                     word_ns = 0, last_ns = 0;
@@ -106,14 +106,14 @@ class Gdma : public Module {
     uint64_t done_writes(const Channel &channel) const;
     void     update_irq();
 
-    std::string                                   name_;
-    const Clock                                  &clock_;
-    Line                                          irq_;
-    BusMemory                                    &memory_;
-    uint32_t                                      bus_hz_;
-    std::array<Channel, kChannels>                channels_;
+    std::string                                      name_;
+    const Clock                                     &clock_;
+    Line                                             irq_;
+    BusMemory                                       &memory_;
+    uint32_t                                         bus_hz_;
+    std::array<Channel, kChannels>                   channels_;
     std::map<unsigned, std::shared_ptr<RequestLine>> ports_;
-    uint32_t                                      fin_ = 0, half_ = 0, prio_ = 0;
+    uint32_t                                         fin_ = 0, half_ = 0, prio_ = 0;
 };
 
 } // namespace bk

@@ -29,7 +29,7 @@ build/bkemu BK7252 --load bootloader:firmware/<bootloader>_crc.bin --load app:fi
 
 `BK7252` names the profile `profiles/BK7252.toml`, found next to the
 executable (`<exe>/../profiles`) or in the directory named by
-`BK7252_PROFILES`. `--load TARGET:FILE` places an image: `bootloader` (flash
+`BKEMU_PROFILES`. `--load TARGET:FILE` places an image: `bootloader` (flash
 offset 0) and `app` (flash offset 0x11000) take CRC-protected `_crc.bin`
 images; `RAM`, `IRAM` and plain addresses are also accepted. On start the
 emulator prints where its UARTs are connected:
@@ -47,7 +47,30 @@ instead (`--uart1 stdio` and `--uart2 stdio` are shorthands for `UART1` and
 reaching the firmware); `--uart NAME=/dev/ttyUSB0` connects it to a real serial port at
 115200 baud instead; `--i2c NAME=TYPE[@ADDRESS]` attaches a device (for example `hi704`)
 to the I2C controller module `NAME` (`--i2c1 TYPE` is the shorthand for
-`I2C1`); `-d LIST` enables debug logging. The emulator runs until it receives SIGINT or SIGTERM.
+`I2C1`); `--log-level NAME=LEVEL` sets the level (`debug`, `info`, `warning` or
+`error`) of one logger, for example `--log-level bus=debug`, or of all of them with
+`--log-level all=debug`; later options win. The emulator runs until it receives SIGINT or SIGTERM.
+
+### WiFi
+
+The WiFi MAC (module `MAC`) is an open access point to the firmware. With
+`-p`/`--publish` or `--ssid` the emulator adds a virtual client of that access
+point: it joins the firmware's network, takes an address from the firmware's
+DHCP server and forwards host ports to the firmware.
+
+```
+build/bkemu BK7252 --load ... -p 8080:80 -p 127.0.0.1:5353:53/udp --ssid mycam
+```
+
+`-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]` (repeatable) listens on the host
+address (default `127.0.0.1`, protocol `tcp`) and forwards every connection or
+datagram to the firmware's GUEST_PORT. The emulator prints one line per publish
+(`tcp 127.0.0.1:8080 -> guest port 80`) before the UART lines. A TCP client that
+connects before the firmware has an address waits up to 30 s of emulated time,
+then is dropped with a warning. `--ssid NAME` makes the client join only the
+access point called NAME (default: the first open network it sees). Secured
+networks are not joined. `--log-level wifi=debug` and `--log-level net=debug` show the
+register accesses and the network's own debug messages.
 
 ### Known limitation: start the host tool after the app banner
 

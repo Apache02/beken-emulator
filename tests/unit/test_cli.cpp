@@ -46,21 +46,24 @@ TEST_CASE("usage text lists every option") {
     std::string u = usage();
     CHECK(u.starts_with("Usage: bkemu PROFILE --load TARGET:FILE"));
     for (const char *needle : {"--load",
-                               "-d, --debug",
+                               "--log-level NAME=LEVEL",
                                "--uart NAME=SPEC",
                                "--uart1",
                                "--uart2",
                                "--i2c NAME=",
                                "--i2c1",
+                               "-p, --publish SPEC",
+                               "[HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]",
+                               "--ssid NAME",
                                "-h, --help",
-                               "BK7252_PROFILES"})
+                               "BKEMU_PROFILES"})
         CHECK_MESSAGE(u.find(needle) != std::string::npos, needle);
     CHECK(u.back() == '\n');
 }
 
 TEST_CASE("cli requires load") {
     CHECK(error_of({"BK7252"}) == "at least one --load is required");
-    CHECK(error_of({"BK7252", "-d", "bus"}) == "at least one --load is required");
+    CHECK(error_of({"BK7252", "--log-level", "bus=debug"}) == "at least one --load is required");
 }
 
 TEST_CASE("cli parses profile, loads and uarts") {
@@ -81,7 +84,7 @@ TEST_CASE("cli parses profile, loads and uarts") {
                         {"UART1", "stdio"       },
                         {"UART2", "/dev/ttyUSB0"}
     });
-    CHECK(o.debug.empty());
+    CHECK(o.log_levels.empty());
 
     CliOptions d = parse({"--load", "ram:x.bin", "BK7252"});
     CHECK(d.profile == "BK7252");
@@ -109,9 +112,36 @@ TEST_CASE("cli uart errors") {
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--uart1"}) == "--uart1 needs a value");
 }
 
-TEST_CASE("cli debug csv repeatable") {
-    CliOptions o = parse({"BK7252", "--load", "ram:x.bin", "-d", "bus,flash", "--debug", "wdt", "--debug=all"});
-    CHECK(o.debug == std::vector<std::string>{"bus", "flash", "wdt", "all"});
+TEST_CASE("cli log levels are repeatable and keep their order") {
+    CliOptions o = parse({"BK7252",
+                          "--load",
+                          "ram:x.bin",
+                          "--log-level",
+                          "all=DEBUG",
+                          "--log-level",
+                          "unknown=warning",
+                          "--log-level=net.stack=Error"});
+    CHECK(o.log_levels == std::vector<std::pair<std::string, Level>>{
+                              {"all",       Level::Debug  },
+                              {"unknown",   Level::Warning},
+                              {"net.stack", Level::Error  }
+    });
+}
+
+TEST_CASE("cli log level errors") {
+    const std::vector<std::string> base{"BK7252", "--load", "ram:x.bin"};
+    auto                           error = [&](const std::string &spec) {
+        std::vector<std::string> args = base;
+        args.push_back("--log-level");
+        args.push_back(spec);
+        return error_of(args);
+    };
+    CHECK(error("bus") == "--log-level needs NAME=LEVEL");
+    CHECK(error("=debug") == "--log-level needs NAME=LEVEL");
+    CHECK(error("bus=") == "--log-level needs NAME=LEVEL");
+    CHECK(error("bus=loud") == "bad log level 'loud' (want debug, info, warning or error)");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--log-level"}) == "--log-level needs a value");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "-d", "bus"}) == "unknown option -d");
 }
 
 TEST_CASE("cli errors") {
@@ -120,9 +150,48 @@ TEST_CASE("cli errors") {
     CHECK(error_of({"BK7252", "--load"}) == "--load needs a value");
     CHECK(error_of({"BK7252", "--load", "nocolon"}) == "--load expects target:file, got nocolon");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--frobnicate"}) == "unknown option --frobnicate");
-    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "-p", "8080:80"}) == "--publish is not supported in this build");
-    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--publish", "8080:80"}) ==
-          "--publish is not supported in this build");
+}
+
+TEST_CASE("cli publish is repeatable, in command-line order") {
+    CliOptions o = parse({"BK7252",
+                          "--load",
+                          "ram:x.bin",
+                          "-p",
+                          "8080:80",
+                          "--publish",
+                          "127.0.0.2:5353:53/udp",
+                          "--publish=9000:9001/tcp"});
+    REQUIRE(o.publish.size() == 3);
+    CHECK(o.publish[0].host_ip == "127.0.0.1");
+    CHECK(o.publish[0].host_port == 8080);
+    CHECK(o.publish[0].guest_port == 80);
+    CHECK_FALSE(o.publish[0].udp);
+    CHECK(o.publish[1].host_ip == "127.0.0.2");
+    CHECK(o.publish[1].host_port == 5353);
+    CHECK(o.publish[1].guest_port == 53);
+    CHECK(o.publish[1].udp);
+    CHECK(o.publish[2].host_port == 9000);
+    CHECK(parse({"BK7252", "--load", "ram:x.bin"}).publish.empty());
+}
+
+TEST_CASE("cli publish errors carry the request") {
+    const std::string want = " (want [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp], ports 1-65535)";
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "-p", "80"}) == "bad --publish '80'" + want);
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--publish", "0:80"}) == "bad --publish '0:80'" + want);
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "-p", "80:80/sctp"}) == "bad --publish '80:80/sctp'" + want);
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "-p"}) == "-p needs a value");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--publish"}) == "--publish needs a value");
+}
+
+TEST_CASE("cli ssid") {
+    CHECK_FALSE(parse({"BK7252", "--load", "ram:x.bin"}).ssid);
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--ssid", "my cam"}).ssid == "my cam");
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--ssid=a=b"}).ssid == "a=b");
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--ssid", std::string(32, 'x')}).ssid == std::string(32, 'x'));
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--ssid"}) == "--ssid needs a value");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--ssid", ""}) == "--ssid needs a name of 1 to 32 bytes");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--ssid", std::string(33, 'x')}) ==
+          "--ssid needs a name of 1 to 32 bytes");
 }
 
 TEST_CASE("cli i2c takes NAME=DEVICE, --i2c1 is a shorthand, order is kept") {

@@ -437,18 +437,18 @@ TEST_CASE("unknown param ignored") {
 }
 
 TEST_CASE("profile directory next to the executable or from the environment") {
-    const char *saved = std::getenv("BK7252_PROFILES");
+    const char *saved = std::getenv("BKEMU_PROFILES");
     std::string old   = saved ? saved : "";
-    ::unsetenv("BK7252_PROFILES");
+    ::unsetenv("BKEMU_PROFILES");
     CHECK(profile_dir("/opt/bk/bin/bk7252-emu") == fs::path("/opt/bk/profiles"));
-    ::setenv("BK7252_PROFILES", "/tmp/elsewhere", 1);
+    ::setenv("BKEMU_PROFILES", "/tmp/elsewhere", 1);
     CHECK(profile_dir("/opt/bk/bin/bk7252-emu") == fs::path("/tmp/elsewhere"));
-    ::setenv("BK7252_PROFILES", "", 1);
+    ::setenv("BKEMU_PROFILES", "", 1);
     CHECK(profile_dir("/opt/bk/bin/bk7252-emu") == fs::path("/opt/bk/profiles"));
     if (saved)
-        ::setenv("BK7252_PROFILES", old.c_str(), 1);
+        ::setenv("BKEMU_PROFILES", old.c_str(), 1);
     else
-        ::unsetenv("BK7252_PROFILES");
+        ::unsetenv("BKEMU_PROFILES");
 }
 
 // --- image loading --------------------------------------------------------

@@ -28,7 +28,7 @@ struct ProfileError : std::runtime_error {
 // missing keys and values of the wrong type.
 Profile load_profile(const std::string &name, const std::filesystem::path &dir);
 
-// The profile directory: $BK7252_PROFILES when set and non-empty, otherwise
+// The profile directory: $BKEMU_PROFILES when set and non-empty, otherwise
 // `profiles` next to the directory holding the executable
 // (<dir of exe>/../profiles).
 std::filesystem::path profile_dir(const std::filesystem::path &exe);

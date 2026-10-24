@@ -419,7 +419,7 @@ TEST_CASE("gdma reset clears channels and flags") {
 
 TEST_CASE("gdma logs configuration, start and completion at DEBUG") {
     Fixture f;
-    Logger::set_debug("gdma");
+    Logger::set_level("gdma", Level::Debug);
     f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
     f.run_to_end();
     f.w(kStatus, 1);
