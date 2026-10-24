@@ -240,11 +240,11 @@ TEST_CASE("mac reset zeroes the stand-ins and restarts the counters") {
 
 namespace {
 
-constexpr uint32_t kState = 0x038, kDoze2 = 0x048, kErrRec = 0x054, kBeacon1 = 0x064, kEventSet = 0x084,
-                   kEventClear = 0x088, kUnmask = 0x08C, kTsfLo = 0x0A4, kTsfHi = 0x0A8, kKey0 = 0x0AC, kAddrLo = 0x0BC,
-                   kAddrHi = 0x0C0, kEncr = 0x0C4, kKeyRange = 0x0D8, kAbs0 = 0x128;
-constexpr uint32_t kMacCntrl2 = 0x050, kGenStatus = 0x06C, kGenAck = 0x070, kGenEnable = 0x074, kTxStatus = 0x078,
-                   kTxAck = 0x07C, kTxEnable = 0x080, kAir1 = 0x160, kAir2 = 0x164, kAirValue = 0x168;
+constexpr uint32_t kState = 0x038, kErrRec = 0x054, kBeacon1 = 0x064, kKey0 = 0x0AC, kAddrLo = 0x0BC, kAddrHi = 0x0C0,
+                   kEncr = 0x0C4, kKeyRange = 0x0D8, kAbs0 = 0x128;
+constexpr uint32_t kDoze2 = 0x048, kMacCntrl2 = 0x050, kGenStatus = 0x06C, kGenAck = 0x070, kGenEnable = 0x074,
+                   kTxStatus = 0x078, kTxAck = 0x07C, kTxEnable = 0x080, kEventSet = 0x084, kEventClear = 0x088,
+                   kUnmask = 0x08C, kTsfLo = 0x0A4, kTsfHi = 0x0A8, kAir1 = 0x160, kAir2 = 0x164, kAirValue = 0x168;
 constexpr uint32_t kMaster = 1u << 31, kTbtt = 1, kIdleBit = 4, kTimersBit = 8;
 
 } // namespace
@@ -357,53 +357,77 @@ TEST_CASE("mac ABS timers fire in tick, honour the unmask register and set TIMER
     Fixture f;
     f.at_us(0);
     f.wpl(kGenEnable, kMaster | kTimersBit);
-    f.wcore(kUnmask, 1);
+    f.wpl(kUnmask, 1);
     f.wcore(kAbs0, 100);
     f.wcore(kAbs0 + 4, 200); // timer 1 is masked
     f.at_us(99);
-    CHECK(f.core(kEventSet) == 0);
+    CHECK(f.pl(kEventSet) == 0);
     CHECK_FALSE(f.level[Fixture::General]);
     f.at_us(100);
-    CHECK(f.core(kEventSet) == 1);
-    CHECK(f.core(kEventClear) == 1);
+    CHECK(f.pl(kEventSet) == 1);
+    CHECK(f.pl(kEventClear) == 1);
     CHECK(f.pl(kGenStatus) == kTimersBit);
     CHECK(f.level[Fixture::General]);
-    f.wcore(kEventClear, 1);
-    CHECK(f.core(kEventSet) == 0);
-    CHECK(f.core(kEventClear) == 0);
+    f.wpl(kEventClear, 1);
+    CHECK(f.pl(kEventSet) == 0);
+    CHECK(f.pl(kEventClear) == 0);
     f.at_us(200); // masked: expires silently
-    CHECK(f.core(kEventSet) == 0);
+    CHECK(f.pl(kEventSet) == 0);
     f.at_us(300);
-    CHECK(f.core(kEventSet) == 0);
+    CHECK(f.pl(kEventSet) == 0);
     CHECK_FALSE(f.mac.next_event_ns().has_value());
+}
+
+TEST_CASE("mac timer events, doze control and TSF are platform bank registers") {
+    // The core bank words at the same offsets are reserved: plain stand-ins.
+    Fixture f;
+    f.at_us(0);
+    f.wpl(kGenEnable, kMaster | kTimersBit);
+    f.wcore(kUnmask, 1);
+    f.wcore(kAbs0, 100);
+    f.at_us(100);
+    CHECK(f.pl(kEventSet) == 0); // fired, but masked in the platform bank
+    CHECK(f.core(kUnmask) == 1);
+    f.wcore(kEventSet, 1);
+    CHECK(f.pl(kEventSet) == 0);
+    CHECK(f.core(kEventSet) == 1);
+    CHECK_FALSE(f.level[Fixture::General]);
+    f.at_us(200);
+    CHECK(f.pl(kTsfLo) == 200);
+    CHECK(f.core(kTsfLo) == 0);
+    f.wcore(kTsfLo, 7);
+    CHECK(f.pl(kTsfLo) == 200);
+    f.wcore(kState, 0x20);
+    f.wcore(kDoze2, 1);
+    CHECK(f.core(kState) == 0x22);
 }
 
 TEST_CASE("mac ABS timer targets at or behind the counter never match") {
     Fixture f;
     f.at_us(0);
-    f.wcore(kUnmask, 0x3FF);
+    f.wpl(kUnmask, 0x3FF);
     f.at_us(500);
     f.wcore(kAbs0, 500);                   // equal
     f.wcore(kAbs0 + 4, 400);               // behind
     f.wcore(kAbs0 + 8, 500 + 0x80000000u); // half the range ahead is not "ahead"
     f.at_us(600);
-    CHECK(f.core(kEventSet) == 0);
+    CHECK(f.pl(kEventSet) == 0);
     CHECK_FALSE(f.mac.next_event_ns().has_value());
     f.wcore(kAbs0 + 36, 700); // the last timer
     f.at_us(700);
-    CHECK(f.core(kEventSet) == 0x200);
+    CHECK(f.pl(kEventSet) == 0x200);
 }
 
 TEST_CASE("mac event_set forces events and raises TIMERS only for unmasked ones") {
     Fixture f;
     f.wpl(kGenEnable, kMaster | kTimersBit);
-    f.wcore(kUnmask, 1);
-    f.wcore(kEventSet, 0xFFFFFC02); // only bits 0..9 count; timer 1 is masked
-    CHECK(f.core(kEventSet) == 0x2);
-    CHECK(f.core(kEventClear) == 0x2);
+    f.wpl(kUnmask, 1);
+    f.wpl(kEventSet, 0xFFFFFC02); // only bits 0..9 count; timer 1 is masked
+    CHECK(f.pl(kEventSet) == 0x2);
+    CHECK(f.pl(kEventClear) == 0x2);
     CHECK(f.pl(kGenStatus) == 0);
-    f.wcore(kEventSet, 0x401);
-    CHECK(f.core(kEventSet) == 0x3);
+    f.wpl(kEventSet, 0x401);
+    CHECK(f.pl(kEventSet) == 0x3);
     CHECK(f.pl(kGenStatus) == kTimersBit);
 }
 
@@ -424,23 +448,23 @@ TEST_CASE("mac TSF follows the counter, writes move one half at a time") {
     Fixture f;
     f.at_us(0);
     f.at_us(10);
-    CHECK(f.core(kTsfLo) == 10);
-    CHECK(f.core(kTsfHi) == 0);
-    f.wcore(kTsfLo, 0x1000);
-    CHECK(f.core(kTsfLo) == 0x1000);
+    CHECK(f.pl(kTsfLo) == 10);
+    CHECK(f.pl(kTsfHi) == 0);
+    f.wpl(kTsfLo, 0x1000);
+    CHECK(f.pl(kTsfLo) == 0x1000);
     f.at_us(20);
-    CHECK(f.core(kTsfLo) == 0x100A);
-    f.wcore(kTsfHi, 5);
-    CHECK(f.core(kTsfLo) == 0x100A);
-    CHECK(f.core(kTsfHi) == 5);
+    CHECK(f.pl(kTsfLo) == 0x100A);
+    f.wpl(kTsfHi, 5);
+    CHECK(f.pl(kTsfLo) == 0x100A);
+    CHECK(f.pl(kTsfHi) == 5);
     CHECK(f.core(kLo) == 20); // the counter itself is not touched
-    f.wcore(kTsfLo, 0xFFFFFFF0);
+    f.wpl(kTsfLo, 0xFFFFFFF0);
     f.at_us(40); // 20 us later: the 64-bit sum carries into the high half
-    CHECK(f.core(kTsfLo) == 4);
-    CHECK(f.core(kTsfHi) == 6);
+    CHECK(f.pl(kTsfLo) == 4);
+    CHECK(f.pl(kTsfHi) == 6);
     f.power = false;
-    CHECK(f.core(kTsfLo) == 0);
-    CHECK(f.core(kTsfHi) == 0);
+    CHECK(f.pl(kTsfLo) == 0);
+    CHECK(f.pl(kTsfHi) == 0);
 }
 
 TEST_CASE("mac TBTT sets the general interrupt once per beacon period") {
@@ -511,14 +535,14 @@ TEST_CASE("mac TBTT wakes DOZE; entering ACTIVE from DOZE keeps the beacon index
 TEST_CASE("mac doze control bit 0 wakes a dozing MAC") {
     Fixture f;
     f.wcore(kState, 0x20);
-    f.wcore(kDoze2, 0);
+    f.wpl(kDoze2, 0);
     CHECK(f.core(kState) == 0x22);
-    f.wcore(kDoze2, 1);
+    f.wpl(kDoze2, 1);
     CHECK(f.core(kState) == 0x33);
     f.wcore(kState, 0x00);
-    f.wcore(kDoze2, 1); // only DOZE is affected
+    f.wpl(kDoze2, 1); // only DOZE is affected
     CHECK(f.core(kState) == 0);
-    CHECK(f.core(kDoze2) == 1);
+    CHECK(f.pl(kDoze2) == 1);
 }
 
 TEST_CASE("mac key storage: write, read back, search in insertion order") {
@@ -649,10 +673,10 @@ TEST_CASE("mac reset clears state, interrupts, timers, TSF offset, keys and the 
     f.wpl(kTxEnable, 0xFFFFFFFF);
     f.wcore(kState, 0x30);
     f.wcore(kState, 0);
-    f.wcore(kUnmask, 1);
+    f.wpl(kUnmask, 1);
     f.wcore(kAbs0, 100);
-    f.wcore(kEventSet, 1);
-    f.wcore(kTsfLo, 5000);
+    f.wpl(kEventSet, 1);
+    f.wpl(kTsfLo, 5000);
     f.wcore(kAddrLo, 0x11);
     f.wcore(kEncr, 1u << 30 | 30u << 16);
     f.mac.raise_txrx(1);
@@ -661,11 +685,11 @@ TEST_CASE("mac reset clears state, interrupts, timers, TSF offset, keys and the 
     const int before = f.writes[Fixture::General];
     f.mac.reset();
     CHECK(f.core(kState) == 0);
-    CHECK(f.core(kEventSet) == 0);
+    CHECK(f.pl(kEventSet) == 0);
     CHECK(f.pl(kGenStatus) == 0);
     CHECK(f.pl(kTxStatus) == 0);
     CHECK(f.core(0x004) == 0x00001C03);
-    CHECK(f.core(kTsfLo) == f.core(kLo));
+    CHECK(f.pl(kTsfLo) == f.core(kLo));
     CHECK_FALSE(f.mac.next_event_ns().has_value());
     CHECK_FALSE(f.level[Fixture::General]);
     CHECK_FALSE(f.level[Fixture::Prot]);

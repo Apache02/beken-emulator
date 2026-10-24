@@ -21,13 +21,14 @@ namespace bk {
 // (plain memory that logs its accesses, see Unknown); the ones with behaviour
 // are served here:
 //
-// - counters 0x11C / 0x120 / 0x124 and the TSF 0x0A4 / 0x0A8, which count from
-//   0 while the MAC is powered (the `mac_powered` signal, always powered
-//   without one) and read 0 while it is powered down;
-// - the state machine 0x038, the version 0x004, error recovery 0x054 and doze
-//   control 0x048, with TBTT detection in tick();
+// - counters 0x11C / 0x120 / 0x124 and the platform bank's TSF 0x0A4 / 0x0A8,
+//   which count from 0 while the MAC is powered (the `mac_powered` signal,
+//   always powered without one) and read 0 while it is powered down;
+// - the state machine 0x038, the version 0x004, error recovery 0x054 and the
+//   platform bank's doze control 0x048, with TBTT detection in tick();
 // - general and TX/RX interrupts of the platform bank, driving six ICU lines;
-// - the ten ABS timers, the event registers and the key storage RAM;
+// - the ten ABS timers 0x128, the platform bank's timer event set / clear /
+//   unmask 0x084 / 0x088 / 0x08C, and the key storage RAM;
 // - time on air (platform 0x160..0x168) and the self-clearing soft reset.
 class WifiMac : public Module {
   public:

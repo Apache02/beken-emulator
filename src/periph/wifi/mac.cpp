@@ -10,19 +10,19 @@ namespace bk {
 namespace {
 
 // Core bank.
-constexpr uint32_t kVersion = 0x004, kStateCntrl = 0x038, kDozeCntrl2 = 0x048, kErrorRecovery = 0x054,
-                   kBeaconCntrl1 = 0x064, kEventSet = 0x084, kEventClear = 0x088, kTimerUnmask = 0x08C, kTsfLo = 0x0A4,
-                   kTsfHi = 0x0A8, kKeyWord0 = 0x0AC, kKeyAddrLo = 0x0BC, kKeyAddrHi = 0x0C0, kEncrCntrl = 0x0C4,
-                   kKeyRange = 0x0D8, kCounter1 = 0x11C, kCounter2Lo = 0x120, kCounter2Hi = 0x124, kAbsTimer0 = 0x128;
+constexpr uint32_t kVersion = 0x004, kStateCntrl = 0x038, kErrorRecovery = 0x054, kBeaconCntrl1 = 0x064,
+                   kKeyWord0 = 0x0AC, kKeyAddrLo = 0x0BC, kKeyAddrHi = 0x0C0, kEncrCntrl = 0x0C4, kKeyRange = 0x0D8,
+                   kCounter1 = 0x11C, kCounter2Lo = 0x120, kCounter2Hi = 0x124, kAbsTimer0 = 0x128;
 constexpr uint32_t kAbsTimers = 10;
 constexpr uint32_t kSwUpdate  = 1u << 31;
 constexpr uint64_t kMask48    = (uint64_t{1} << 48) - 1;
 
 // Platform bank.
-constexpr uint32_t kMacCntrl2 = 0x050, kGeneralStatus = 0x06C, kGeneralAck = 0x070, kGeneralEnable = 0x074,
-                   kTxrxStatus = 0x078, kTxrxAck = 0x07C, kTxrxEnable = 0x080, kAirParam1 = 0x160, kAirParam2 = 0x164,
-                   kAirValue = 0x168, kDmaSet = 0x180, kDmaClear = 0x184, kDmaStatus1 = 0x188, kRxHeaderHead = 0x1B8,
-                   kRxPayloadHead = 0x1BC;
+constexpr uint32_t kDozeCntrl2 = 0x048, kMacCntrl2 = 0x050, kGeneralStatus = 0x06C, kGeneralAck = 0x070,
+                   kGeneralEnable = 0x074, kTxrxStatus = 0x078, kTxrxAck = 0x07C, kTxrxEnable = 0x080,
+                   kEventSet = 0x084, kEventClear = 0x088, kTimerUnmask = 0x08C, kTsfLo = 0x0A4, kTsfHi = 0x0A8,
+                   kAirParam1 = 0x160, kAirParam2 = 0x164, kAirValue = 0x168, kDmaSet = 0x180, kDmaClear = 0x184,
+                   kDmaStatus1 = 0x188, kRxHeaderHead = 0x1B8, kRxPayloadHead = 0x1BC;
 
 constexpr uint32_t kUseRxHeaderHead = 1u << 26, kUseRxPayloadHead = 1u << 27;
 constexpr int      kRssi = -45;
@@ -36,9 +36,9 @@ constexpr uint32_t kCmdBits = kCmdRead | kCmdWrite | kCmdSearch;
 constexpr uint32_t kProtMask = 0x0000003F, kTxMask = 0x00009FC0, kRxMask = 1u << 16,
                    kTimerMask = (1u << 14) | (1u << 17), kMiscMask = 0x1FFC2000 & ~(kRxMask | kTimerMask);
 
-bool is_counter(uint32_t word) {
-    return word == kCounter1 || word == kCounter2Lo || word == kCounter2Hi || word == kTsfLo || word == kTsfHi;
-}
+// The counters of the core bank and the TSF of the platform bank.
+bool is_counter(uint32_t word) { return word == kCounter1 || word == kCounter2Lo || word == kCounter2Hi; }
+bool is_tsf(uint32_t word) { return word == kTsfLo || word == kTsfHi; }
 
 Logger &log() { return Logger::get("wifi.mac_pl"); }
 
@@ -160,7 +160,7 @@ void WifiMac::fire_timers() {
             fired |= 1u << i;
         }
     }
-    fired &= core_.peek(kTimerUnmask);
+    fired &= pl_.peek(kTimerUnmask);
     if (fired) {
         events_ |= fired;
         general_ |= kGeneralTimers;
@@ -370,14 +370,6 @@ uint32_t WifiMac::core_write_rule(uint32_t word, uint32_t value) {
             return state_ << 4 | state_;
         }
         case kErrorRecovery: return value & ~0xFCu;
-        case kDozeCntrl2:
-            if ((value & 1) && state_ == kDoze) state_ = next_state_ = kActive;
-            return value;
-        case kEventSet:
-            events_ |= value & 0x3FF;
-            if (events_ & core_.peek(kTimerUnmask)) general_ |= kGeneralTimers;
-            return events_;
-        case kEventClear: events_ &= ~value; return events_;
         case kEncrCntrl: return key_command(value);
         default:
             if (word >= kAbsTimer0 && word < kAbsTimer0 + 4 * kAbsTimers) arm_timer((word - kAbsTimer0) / 4, value);
@@ -387,6 +379,14 @@ uint32_t WifiMac::core_write_rule(uint32_t word, uint32_t value) {
 
 uint32_t WifiMac::pl_write_rule(uint32_t word, uint32_t value) {
     switch (word) {
+        case kDozeCntrl2:
+            if ((value & 1) && state_ == kDoze) state_ = next_state_ = kActive;
+            return value;
+        case kEventSet:
+            events_ |= value & 0x3FF;
+            if (events_ & pl_.peek(kTimerUnmask)) general_ |= kGeneralTimers;
+            return events_;
+        case kEventClear: events_ &= ~value; return events_;
         case kMacCntrl2: soft_reset_pending_ = value & 1; return value;
         case kGeneralAck: general_ &= ~value; return value;
         case kTxrxAck: txrx_ &= ~value; return value;
@@ -399,14 +399,13 @@ uint32_t WifiMac::pl_write_rule(uint32_t word, uint32_t value) {
 }
 
 void WifiMac::refresh_core(uint32_t word) {
-    if (word == kStateCntrl)
-        core_.poke(word, next_state_ << 4 | state_);
-    else if (word == kEventSet || word == kEventClear)
-        core_.poke(word, events_);
+    if (word == kStateCntrl) core_.poke(word, next_state_ << 4 | state_);
 }
 
 void WifiMac::refresh_pl(uint32_t word) {
-    if (word == kGeneralStatus)
+    if (word == kEventSet || word == kEventClear)
+        pl_.poke(word, events_);
+    else if (word == kGeneralStatus)
         pl_.poke(word, general_ & pl_.peek(kGeneralEnable) & kPending);
     else if (word == kTxrxStatus)
         pl_.poke(word, txrx_ & pl_.peek(kTxrxEnable) & kPending);
@@ -415,6 +414,7 @@ void WifiMac::refresh_pl(uint32_t word) {
 uint32_t WifiMac::read(const std::string &range, uint32_t offset, uint32_t size) {
     const uint32_t word = offset & ~3u;
     if (range == "pl") {
+        if (is_tsf(word)) return counter(word);
         refresh_pl(word);
         return pl_.read("regs", offset, size);
     }
@@ -425,6 +425,11 @@ uint32_t WifiMac::read(const std::string &range, uint32_t offset, uint32_t size)
 
 void WifiMac::write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) {
     const uint32_t word = offset & ~3u;
+    if (size < 4) value &= (1u << (size * 8)) - 1;
+    if (range == "pl" && is_tsf(word)) {
+        write_tsf(word == kTsfHi, value);
+        return;
+    }
     if (range == "pl") {
         pl_.write("regs", offset, size, value);
         // The stand-in merged the written bytes; the rule sees the whole word.
@@ -438,13 +443,10 @@ void WifiMac::write(const std::string &range, uint32_t offset, uint32_t size, ui
         update_lines();
         return;
     }
-    if (size < 4) value &= (1u << (size * 8)) - 1;
     if (word == kCounter2Lo)
         lo_written_ = value;
     else if (word == kCounter2Hi)
         software_update(value);
-    else if (word == kTsfLo || word == kTsfHi)
-        write_tsf(word == kTsfHi, value);
     // counter 1 is read-only
 }
 
