@@ -11,7 +11,7 @@ if [ -z "${BKLOADER:-}" ] || [ ! -x "$BKLOADER" ]; then
 fi
 for image in bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin app_crc.bin test_flash_sector_iram.bin test_gdma_iram.bin; do
   if [ ! -f "$dir/../../firmware/$image" ]; then
-    echo "SKIP: firmware/$image is missing (the images are not part of the repository)"
+    echo "SKIP: firmware/$image is missing"
     exit 77
   fi
 done

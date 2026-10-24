@@ -24,8 +24,26 @@ This produces `build/bkemu` and `build/unit_tests`.
 ### Run
 
 ```
-build/bkemu BK7252 --load bootloader:firmware/<bootloader>_crc.bin --load app:firmware/app_crc.bin
+build/bkemu BK7252 --load bootloader:firmware/bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin --load app:firmware/app_crc.bin
 ```
+
+`firmware/` holds ready-to-run images, so this works right after the build. The
+camera application with its web page, a sensor on the I2C bus and a forwarded
+port is started like this:
+
+```
+build/bkemu BK7252 \
+  --load bootloader:firmware/bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin \
+  --load app:firmware/A9_B_V1_3-camera-v0.1.0-uart2_crc.bin \
+  -p 8080:80 -p 2323:23 \
+  --i2c1 hi704 \
+  --uart2 stdio \
+  --log-level unknown=warning
+```
+
+Once the line `associated with 'Beken-72838a'` has appeared, open
+`http://127.0.0.1:8080/`; the application's shell is on UART2 (the terminal) and,
+over the network, on port 2323. Ctrl-C stops the emulator.
 
 `BK7252` names the profile `profiles/BK7252.toml`, found next to the
 executable (`<exe>/../profiles`) or in the directory named by
@@ -89,7 +107,7 @@ ctest --test-dir build                 # unit tests and firmware checks
 BKLOADER=/path/to/bkloader tests/firmware/run_all.sh
 ```
 
-The firmware checks need the images in `firmware/` (not part of the
-repository) and the path of the SDK's `bkloader` in `BKLOADER`; without them
-the `firmware` test is reported as skipped. `tools/measure_speed.sh` reports
+The firmware checks need the images in `firmware/` and the path of the SDK's
+`bkloader` in `BKLOADER`; without the latter the `firmware` test is reported as
+skipped. `tools/measure_speed.sh` reports
 emulation speed. Details in `tests/firmware/README.md`.

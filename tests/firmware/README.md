@@ -17,7 +17,7 @@ scripts exit 0 on pass and 1 on failure, including a missing image. Checks 1
 and 2 do not use `BKLOADER`; checks 3 to 6 exit 77 when it is unset or not
 executable.
 
-Images, in `firmware/` (not part of the repository):
+Images, in `firmware/`:
 `bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin`, `app_crc.bin` (the `ram_loader`
 application), `test_flash_sector_iram.bin` (an IRAM test that erases and
 programs one flash sector), `test_gdma_iram.bin` (an IRAM test of the GDMA
