@@ -99,6 +99,9 @@ class StdioEndpoint : public ByteEndpoint {
             ::cfmakeraw(&raw);
             raw.c_cc[VMIN]  = 1;
             raw.c_cc[VTIME] = 0;
+            // Output keeps the newline translation: the log shares the terminal and ends its lines
+            // with a bare \n.
+            raw.c_oflag |= OPOST | ONLCR;
             // Ctrl-C stays the way out: it raises SIGINT instead of reaching the firmware. Ctrl-Z
             // and Ctrl-\ are passed to the firmware, so the terminal is never left in raw mode.
             raw.c_lflag |= ISIG;
