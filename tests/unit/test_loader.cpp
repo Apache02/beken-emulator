@@ -250,6 +250,7 @@ TEST_CASE("shipped profile builds a machine") {
     CHECK(regions[1].name == "RAM1");
     CHECK(regions[1].base == 0x00400000);
     CHECK(regions[1].size == 0x40000);
+    CHECK(regions[1].span == 0x400000); // mirrors up to the peripheral window
     CHECK_FALSE(regions[1].executable);
     CHECK(regions[2].name == "RAM2");
     CHECK(regions[2].base == 0x00900000);
@@ -393,6 +394,16 @@ TEST_CASE("bad profile syntax and types rejected") {
         load_profile("WRONG", dir.path),
         ((dir.path / "WRONG.toml").string() + ": bad profile: memory RAM: size must be an integer").c_str(),
         ProfileError);
+
+    text = kSmallProfile;
+    dir.write("WINDOW.toml", text.replace(text.find("size = 0x1000"), 13, "size = 0x1000\nwindow = 0x1800"));
+    CHECK_THROWS_WITH_AS(
+        load_profile("WINDOW", dir.path),
+        ((dir.path / "WINDOW.toml").string() + ": bad profile: memory RAM: window must be a multiple of size").c_str(),
+        ProfileError);
+    text = kSmallProfile;
+    dir.write("MIRRORS.toml", text.replace(text.find("size = 0x1000"), 13, "size = 0x1000\nwindow = 0x4000"));
+    CHECK(load_profile("MIRRORS", dir.path).memory[0].window == 0x4000);
 
     dir.write("NONAME.toml", "insns_per_us = 1\nperipheral_window = [0, 0]\n");
     CHECK_THROWS_WITH_AS(load_profile("NONAME", dir.path),

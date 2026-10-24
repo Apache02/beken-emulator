@@ -19,11 +19,13 @@ namespace bk {
 
 class Logger;
 
-// A RAM region mapped straight into the CPU.
+// A RAM region mapped straight into the CPU, and its mirrors up to `span`
+// bytes from `base` (`span` is `size` when it has none).
 struct MemRegion {
     std::string name;
     uint32_t    base, size;
     bool        executable;
+    uint32_t    span;
 };
 
 // A module range claimed at a base address.
@@ -44,6 +46,12 @@ struct RangeInfo {
 // Unmapped accesses go to one hook installed by the constructor, which offers
 // them to the demand ranges first and only then reports a bus error, so the
 // order of claims does not matter.
+//
+// A RAM region with a window wider than itself repeats over it, as a chip
+// that decodes fewer address lines than its memory map has: the copies after
+// the first are mirrors, mapped as MMIO that reaches the same bytes. A
+// mirror access is most likely a firmware bug, so each instruction that
+// makes one is reported once, as a warning.
 class Bus {
   public:
     explicit Bus(Cpu &cpu);
@@ -51,8 +59,11 @@ class Bus {
     Bus(const Bus &)            = delete;
     Bus &operator=(const Bus &) = delete;
 
-    // Throws std::invalid_argument if the region overlaps RAM or a module range.
-    void add_memory(std::string name, uint32_t base, uint32_t size, bool executable);
+    // `window` (0 for `size`) is the address space the region repeats over, a
+    // multiple of `size`; with mirrors, `base` and `size` must be 4 KiB
+    // aligned. Throws std::invalid_argument if the window overlaps RAM or a
+    // module range, or breaks those rules.
+    void add_memory(std::string name, uint32_t base, uint32_t size, bool executable, uint32_t window = 0);
     // Places each of the module's ranges (and demand ranges) at bases[range
     // name]. Throws std::invalid_argument if a base is missing or a range
     // overlaps RAM or another range. Installs module.invalidate.
@@ -105,6 +116,12 @@ class Bus {
         Bus     *bus;
         uint32_t base;
     };
+    // The mirrors of one RAM region: [base + size, base + span).
+    struct Mirror {
+        Bus        *bus;
+        std::string name;
+        uint32_t    base, size, span;
+    };
     struct CachedPage;
     struct Demand {
         Bus                                            *bus;
@@ -124,6 +141,8 @@ class Bus {
 
     static uint64_t mmio_read(uc_engine *, uint64_t offset, unsigned size, void *user);
     static void     mmio_write(uc_engine *, uint64_t offset, unsigned size, uint64_t value, void *user);
+    static uint64_t mirror_read(uc_engine *, uint64_t offset, unsigned size, void *user);
+    static void     mirror_write(uc_engine *, uint64_t offset, unsigned size, uint64_t value, void *user);
     static bool     on_unmapped(uc_engine *, uc_mem_type type, uint64_t addr, int size, int64_t value, void *user);
     static bool     on_fetch_prot(uc_engine *, uc_mem_type type, uint64_t addr, int size, int64_t value, void *user);
     static bool     on_write_prot(uc_engine *, uc_mem_type type, uint64_t addr, int size, int64_t value, void *user);
@@ -138,14 +157,21 @@ class Bus {
     uint32_t    read(uint32_t addr, unsigned size);
     void        write(uint32_t addr, unsigned size, uint32_t value);
     const Slot *find(uint32_t addr) const;
-    Demand     *find_demand(uint32_t addr);
-    bool        demand_access(Demand &d, uint32_t addr, uint32_t size, bool fetch);
-    void        abort_in_page(Demand &d, uint32_t addr, uint32_t size, Fault::Kind kind);
-    void        invalidate(Demand &d, uint32_t offset, uint32_t size);
-    void        bus_error(uint32_t addr, bool fetch);
-    void        check_overlap(const std::string &label, uint32_t base, uint32_t size) const;
-    void        map_outside(const std::vector<const Entry *> &entries);
-    bool        in_window(uint32_t base, uint64_t end) const;
+    // The mirror holding `addr`, or nullptr.
+    const Mirror *find_mirror(uint32_t addr) const;
+    // The address in the region itself that mirror address `addr` reaches.
+    static uint32_t unmirror(const Mirror &m, uint32_t addr) { return m.base + (addr - m.base) % m.size; }
+    // Reports a mirror access of the current instruction (or of a bus master
+    // when `master`) once.
+    void    mirror_warning(const Mirror &m, uint32_t addr, unsigned size, bool write, bool master);
+    Demand *find_demand(uint32_t addr);
+    bool    demand_access(Demand &d, uint32_t addr, uint32_t size, bool fetch);
+    void    abort_in_page(Demand &d, uint32_t addr, uint32_t size, Fault::Kind kind);
+    void    invalidate(Demand &d, uint32_t offset, uint32_t size);
+    void    bus_error(uint32_t addr, bool fetch);
+    void    check_overlap(const std::string &label, uint32_t base, uint32_t size) const;
+    void    map_outside(const std::vector<const Entry *> &entries);
+    bool    in_window(uint32_t base, uint64_t end) const;
 
     Cpu                                  &cpu_;
     Logger                               &log_;
@@ -155,7 +181,9 @@ class Bus {
     std::vector<Slot>                     slots_;   // sorted by base
     std::vector<std::unique_ptr<Demand>>  demands_;
     std::vector<std::unique_ptr<MmioMap>> mmio_maps_;
-    std::set<uint32_t>                    mmio_pages_; // pages mapped as MMIO outside the window
+    std::vector<std::unique_ptr<Mirror>>  mirrors_;
+    std::unordered_set<uint64_t>          mirror_warned_; // instruction or bus master page, and direction
+    std::set<uint32_t>                    mmio_pages_;    // pages mapped as MMIO outside the window
     bool                                  window_set_ = false;
     uint32_t                              win_base_ = 0, win_size_ = 0;
     std::vector<uc_hook>                  hooks_;

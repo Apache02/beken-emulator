@@ -130,6 +130,12 @@ MemSpec memory(const toml::table &t, size_t index) {
         if (!x->is_boolean()) throw Bad{f.prefix() + "executable must be true or false"};
         m.executable = x->as_boolean()->get();
     }
+    if (f.get("window", false)) {
+        m.window = f.u32("window");
+        if (m.size == 0 || m.window == 0 || m.window % m.size != 0)
+            throw Bad{f.prefix() + "window must be a multiple of size"};
+        if (uint64_t{m.base} + m.window > 0x100000000ULL) throw Bad{f.prefix() + "window passes the end of memory"};
+    }
     return m;
 }
 

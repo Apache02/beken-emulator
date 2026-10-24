@@ -81,6 +81,9 @@ struct MemSpec {
     // survive the reset.
     std::optional<uint8_t> reset_fill;
     bool                   executable = true;
+    // The address space from `base` the region repeats over, a multiple of
+    // `size`; the copies after the first are mirrors. 0 means `size`: none.
+    uint32_t window = 0;
 };
 
 // A point inside a module (for example a flash offset).

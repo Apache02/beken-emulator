@@ -62,17 +62,29 @@ Bus::~Bus() {
 
 void Bus::check_overlap(const std::string &label, uint32_t base, uint32_t size) const {
     for (const MemRegion &r : regions_)
-        if (overlap(base, size, r.base, r.size)) throw std::invalid_argument(label + " overlaps " + r.name);
+        if (overlap(base, size, r.base, r.span)) throw std::invalid_argument(label + " overlaps " + r.name);
     for (const Entry &e : entries_)
         if (overlap(base, size, e.base, e.end - e.base)) throw std::invalid_argument(label + " overlaps " + e.label());
 }
 
-void Bus::add_memory(std::string name, uint32_t base, uint32_t size, bool executable) {
-    check_overlap(name, base, size);
-    if (window_set_ && overlap(base, size, win_base_, win_size_))
+void Bus::add_memory(std::string name, uint32_t base, uint32_t size, bool executable, uint32_t window) {
+    const uint32_t span = window ? window : size;
+    if (size == 0 || span % size != 0)
+        throw std::invalid_argument(name + ": the window must be a multiple of the size");
+    if (uint64_t{base} + span > 0x100000000ULL) throw std::invalid_argument(name + " passes the end of memory");
+    if (span != size && ((base | size) & ~kPageMask))
+        throw std::invalid_argument(name + ": a region with mirrors must be 4 KiB aligned");
+    check_overlap(name, base, span);
+    if (window_set_ && overlap(base, span, win_base_, win_size_))
         throw std::invalid_argument(name + " overlaps the peripheral window");
     cpu_.map_ram(base, size, executable);
-    regions_.push_back({std::move(name), base, size, executable});
+    if (span != size) {
+        auto *m = mirrors_.emplace_back(std::make_unique<Mirror>(Mirror{this, name, base, size, span})).get();
+        check(
+            uc_mmio_map(cpu_.engine(), uint64_t{base} + size, span - size, &Bus::mirror_read, m, &Bus::mirror_write, m),
+            "map mirrors");
+    }
+    regions_.push_back({std::move(name), base, size, executable, span});
 }
 
 void Bus::claim(Module &module, const std::map<std::string, uint32_t> &bases) {
@@ -132,7 +144,7 @@ void Bus::claim_unclaimed(uint32_t win_base, uint32_t win_size) {
     if (window_set_) throw std::logic_error("peripheral window already set");
     if ((win_base | win_size) & ~kPageMask) throw std::invalid_argument("peripheral window must be 4 KiB aligned");
     for (const MemRegion &r : regions_)
-        if (overlap(win_base, win_size, r.base, r.size))
+        if (overlap(win_base, win_size, r.base, r.span))
             throw std::invalid_argument("peripheral window overlaps " + r.name);
     auto *map = mmio_maps_.emplace_back(std::make_unique<MmioMap>(MmioMap{this, win_base})).get();
     check(uc_mmio_map(cpu_.engine(), win_base, win_size, &Bus::mmio_read, map, &Bus::mmio_write, map),
@@ -211,6 +223,12 @@ std::vector<uint8_t> Bus::read_chunk(uint32_t addr, uint32_t size) {
             return cpu_.mem_read(addr, n);
         }
     }
+    if (const Mirror *m = find_mirror(addr)) {
+        mirror_warning(*m, addr, size, false, true);
+        // Up to the end of this copy; the next chunk starts the next one.
+        const uint32_t target = unmirror(*m, addr);
+        return cpu_.mem_read(target, std::min<uint32_t>(size, m->base + m->size - target));
+    }
     Demand *d = find_demand(addr);
     if (!d) throw BusError(addr, "nothing readable there");
     const uint32_t offset   = addr - d->base;
@@ -236,6 +254,12 @@ size_t Bus::write_chunk(uint32_t addr, std::span<const uint8_t> data) {
             check(uc_ctl_remove_cache(cpu_.engine(), addr, uint64_t{addr} + n), "drop translations");
             return n;
         }
+    }
+    if (const Mirror *m = find_mirror(addr)) {
+        mirror_warning(*m, addr, static_cast<unsigned>(data.size()), true, true);
+        const uint32_t target = unmirror(*m, addr);
+        const size_t   n      = std::min<size_t>(data.size(), m->base + m->size - target);
+        return write_chunk(target, data.first(n));
     }
     throw BusError(addr, "nothing writable there");
 }
@@ -329,6 +353,65 @@ void Bus::mmio_write(uc_engine *, uint64_t offset, unsigned size, uint64_t value
     auto          *m    = static_cast<MmioMap *>(user);
     const uint32_t mask = size >= 4 ? 0xFFFFFFFFu : (1u << (8 * size)) - 1;
     m->bus->write(m->base + static_cast<uint32_t>(offset), size, static_cast<uint32_t>(value) & mask);
+}
+
+// ---- Mirrors ----
+
+const Bus::Mirror *Bus::find_mirror(uint32_t addr) const {
+    for (const auto &m : mirrors_)
+        if (addr >= uint64_t{m->base} + m->size && addr < uint64_t{m->base} + m->span) return m.get();
+    return nullptr;
+}
+
+void Bus::mirror_warning(const Mirror &m, uint32_t addr, unsigned size, bool write, bool master) {
+    const uint32_t pc  = cpu_.reg(Reg::PC);
+    const uint64_t key = uint64_t{master ? addr >> 12 : pc} << 2 | uint64_t{master} << 1 | write;
+    if (!mirror_warned_.insert(key).second) return;
+    const uint32_t target = unmirror(m, addr);
+    const char    *what   = write ? "write" : "read";
+    if (master)
+        log_.log(Level::Warning,
+                 format("bus master %s of %u bytes at 0x%08X is in a mirror of %s: it reaches 0x%08X",
+                        what,
+                        size,
+                        addr,
+                        m.name.c_str(),
+                        target));
+    else
+        log_.log(Level::Warning,
+                 format("%s of %u bytes at 0x%08X is in a mirror of %s: it reaches 0x%08X; pc 0x%08X",
+                        what,
+                        size,
+                        addr,
+                        m.name.c_str(),
+                        target,
+                        pc));
+}
+
+// The bytes of one access may run past the end of a copy into the next one,
+// which starts over at the region's base.
+uint64_t Bus::mirror_read(uc_engine *, uint64_t offset, unsigned size, void *user) {
+    auto          *m    = static_cast<Mirror *>(user);
+    const uint32_t addr = m->base + m->size + static_cast<uint32_t>(offset);
+    m->bus->mirror_warning(*m, addr, size, false, false);
+    uint64_t value = 0;
+    for (unsigned i = 0; i < size; ++i)
+        value |= uint64_t{m->bus->cpu_.mem_read(unmirror(*m, addr + i), 1)[0]} << (8 * i);
+    return value;
+}
+
+void Bus::mirror_write(uc_engine *, uint64_t offset, unsigned size, uint64_t value, void *user) {
+    auto          *m    = static_cast<Mirror *>(user);
+    const uint32_t addr = m->base + m->size + static_cast<uint32_t>(offset);
+    m->bus->mirror_warning(*m, addr, size, true, false);
+    for (unsigned i = 0; i < size; ++i) {
+        const uint32_t target = unmirror(*m, addr + i);
+        const uint8_t  byte   = static_cast<uint8_t>(value >> (8 * i));
+        m->bus->cpu_.mem_write(target, std::span<const uint8_t>(&byte, 1));
+        // Code translated from the old byte must not run again. Nothing may
+        // throw through Unicorn, and the region is mapped, so no check.
+        uc_ctl_remove_cache(m->bus->cpu_.engine(), target, uint64_t{target} + 1);
+    }
 }
 
 // ---- Faults ----

@@ -31,7 +31,7 @@ Signal ModuleContext::signal(const std::string &key) const {
 Machine::Machine(const Profile &profile, const ModuleRegistry &registry, EndpointMap endpoints)
     : memory_(profile.memory), aliases_(profile.alias), bus_(cpu_), scheduler_(cpu_, profile.insns_per_us),
       cpu_irq_([this](bool level) { cpu_.raise_irq(level); }), cpu_fiq_([this](bool level) { cpu_.raise_fiq(level); }) {
-    for (const auto &m : profile.memory) bus_.add_memory(m.name, m.base, m.size, m.executable);
+    for (const auto &m : profile.memory) bus_.add_memory(m.name, m.base, m.size, m.executable, m.window);
     for (const auto &spec : profile.modules) add_module(spec, registry, endpoints);
     bus_.claim_unclaimed(profile.win_base, profile.win_size);
     // A defined power-on state for the core; modules start in their own

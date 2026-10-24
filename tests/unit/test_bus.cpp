@@ -611,6 +611,126 @@ TEST_CASE("bus master access that leaves RAM is a bus error") {
     }
 }
 
+namespace {
+
+// RAM at 0x00400000, 64 KiB repeated over 256 KiB, code at 0.
+struct MirrorFixture {
+    std::ostringstream out;
+    Cpu                cpu;
+    Bus                bus{cpu};
+
+    static constexpr uint32_t kBase = 0x00400000, kSize = 0x10000, kWindow = 0x40000;
+
+    MirrorFixture() {
+        Logger::reset_for_tests();
+        Logger::configure(out, false);
+        bus.add_memory("itcm", 0, 0x10000, true);
+        bus.add_memory("ram", kBase, kSize, false, kWindow);
+    }
+    ~MirrorFixture() { Logger::reset_for_tests(); }
+
+    void put(uint32_t addr, uint32_t word) {
+        const uint8_t bytes[4] = {static_cast<uint8_t>(word),
+                                  static_cast<uint8_t>(word >> 8),
+                                  static_cast<uint8_t>(word >> 16),
+                                  static_cast<uint8_t>(word >> 24)};
+        cpu.mem_write(addr, bytes);
+    }
+    uint32_t word(uint32_t addr) {
+        std::vector<uint8_t> b = cpu.mem_read(addr, 4);
+        return b[0] | b[1] << 8 | b[2] << 16 | static_cast<uint32_t>(b[3]) << 24;
+    }
+    // Runs `code` from 0x100 with r2 = `r2`, r4 = `r4`, r1 = `r1`.
+    void run(std::vector<uint32_t> code, uint32_t r1, uint32_t r2, uint32_t r4 = 0) {
+        uint32_t a = 0x100;
+        for (uint32_t w : code) put(a, w), a += 4;
+        put(a, b(a, a));
+        REQUIRE(uc_ctl_flush_tb(cpu.engine()) == UC_ERR_OK);
+        cpu.reset(0x100);
+        cpu.set_reg(Reg::CPSR, kSys);
+        cpu.set_reg(Reg::R1, r1);
+        cpu.set_reg(Reg::R2, r2);
+        cpu.set_reg(Reg::R4, r4);
+        cpu.run(static_cast<uint32_t>(code.size()) + 1);
+    }
+    size_t count(const std::string &s) const {
+        std::string all = out.str();
+        size_t      n   = 0;
+        for (size_t p = all.find(s); p != std::string::npos; p = all.find(s, p + 1)) ++n;
+        return n;
+    }
+};
+
+} // namespace
+
+TEST_CASE("a mirror reaches the same bytes and each instruction warns once") {
+    using F = MirrorFixture;
+    F f;
+    // A store through the third copy lands in the region.
+    f.run({kStrR1R2}, 0x11223344, F::kBase + 2 * F::kSize + 0x40);
+    CHECK(f.word(F::kBase + 0x40) == 0x11223344);
+    CHECK(f.out.str() == line("WARNING",
+                              "write of 4 bytes at 0x00420040 is in a mirror of ram: it reaches 0x00400040; "
+                              "pc 0x00000100"));
+    // A load through the last copy, and the same instruction again: one warning.
+    f.put(F::kBase + 0x80, 0xCAFEF00D);
+    f.out.str("");
+    f.run({kLdrR3R2, kLdrR3R2}, 0, F::kBase + 3 * F::kSize + 0x80);
+    CHECK(f.cpu.reg(Reg::R3) == 0xCAFEF00D);
+    CHECK(f.count("WARNING") == 2); // two instructions at 0x100 and 0x104
+    f.out.str("");
+    f.run({kLdrR3R2}, 0, F::kBase + F::kSize + 0x80);
+    CHECK(f.out.str().empty()); // the instruction at 0x100 has reported a read already
+    // A byte store changes that byte only.
+    f.run({kStrbR1R2}, 0xA5, F::kBase + F::kSize + 0x81);
+    CHECK(f.word(F::kBase + 0x80) == 0xCAFEA50D);
+    // The region itself is plain RAM: no warning.
+    f.out.str("");
+    f.run({kLdrR3R2, kStrR1R2}, 1, F::kBase + 0x40);
+    CHECK(f.out.str().empty());
+    // Past the window nothing is mapped.
+    f.run({kLdrR3R2}, 0, F::kBase + F::kWindow);
+    CHECK(f.count("bus error: unmapped access at 0x00440000") == 1);
+}
+
+TEST_CASE("a bus master reaches the region through a mirror, warned once per page") {
+    using F = MirrorFixture;
+    F             f;
+    BusMemory    &m       = f.bus.memory();
+    const uint8_t bytes[] = {1, 2, 3, 4};
+    m.write(F::kBase + F::kSize + 0x10, bytes);
+    CHECK(f.cpu.mem_read(F::kBase + 0x10, 4) == std::vector<uint8_t>{1, 2, 3, 4});
+    CHECK(m.read(F::kBase + 3 * F::kSize + 0x10, 4) == std::vector<uint8_t>{1, 2, 3, 4});
+    CHECK(m.read(F::kBase + 3 * F::kSize + 0x20, 4).size() == 4);
+    CHECK(f.out.str() ==
+          line("WARNING", "bus master write of 4 bytes at 0x00410010 is in a mirror of ram: it reaches 0x00400010") +
+              line("WARNING",
+                   "bus master read of 4 bytes at 0x00430010 is in a mirror of ram: it reaches "
+                   "0x00400010"));
+    // A transfer across the end of a copy goes on at the start of the next.
+    f.put(F::kBase + F::kSize - 4, 0xBBAA0000);
+    f.put(F::kBase, 0x0000DDCC);
+    CHECK(m.read(F::kBase + 2 * F::kSize - 2, 4) == std::vector<uint8_t>{0xAA, 0xBB, 0xCC, 0xDD});
+    CHECK(f.bus.memory_regions()[1].span == F::kWindow);
+}
+
+TEST_CASE("a mirrored region must be aligned and its window must fit") {
+    Cpu cpu;
+    Bus bus{cpu};
+    CHECK_THROWS_WITH_AS(bus.add_memory("a", 0x400000, 0x10000, false, 0x18000),
+                         "a: the window must be a multiple of the size",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(bus.add_memory("b", 0x400800, 0x10000, false, 0x20000),
+                         "b: a region with mirrors must be 4 KiB aligned",
+                         std::invalid_argument);
+    CHECK_THROWS_WITH_AS(
+        bus.add_memory("c", 0xFFFF0000, 0x10000, false, 0x20000), "c passes the end of memory", std::invalid_argument);
+    bus.add_memory("ram", 0x400000, 0x10000, false, 0x40000);
+    CHECK_THROWS_WITH_AS(bus.add_memory("late", 0x430000, 0x1000, false), "late overlaps ram", std::invalid_argument);
+    CHECK_THROWS_WITH_AS(
+        bus.claim_unclaimed(0x420000, 0x10000), "peripheral window overlaps ram", std::invalid_argument);
+}
+
 TEST_CASE("bus master reads a demand range page by page") {
     Fixture    f;
     BusMemory &m = f.bus.memory();

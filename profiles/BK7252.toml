@@ -12,10 +12,14 @@ base = 0x003F8000
 size = 0x8000
 reset_fill = 0xAA
 
+# The chip decodes 4 MiB of address space for RAM1 but has 256 KiB: the rest
+# of the window up to the peripherals is 15 mirrors of it (measured). An
+# access there is logged as a warning.
 [[memory]]
 name = "RAM1"
 base = 0x00400000
 size = 0x40000
+window = 0x400000
 reset_fill = 0xAA
 executable = false
 
