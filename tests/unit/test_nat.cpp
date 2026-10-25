@@ -300,7 +300,7 @@ TEST_CASE("nat: UDP goes out through a host socket and the answer comes back fro
     CHECK(f.nat.udp_sessions() == 2);
 
     // The first connection to an address is told once.
-    CHECK(f.count(std::format("INFO emulator.net.nat: firmware connects to 127.0.0.1:{} (udp)", remote.port)) == 1);
+    CHECK(f.count(std::format("[I] emulator.net.nat: firmware connects to 127.0.0.1:{} (udp)", remote.port)) == 1);
     CHECK(f.count("firmware connects to") == 1);
 }
 
@@ -350,7 +350,7 @@ TEST_CASE("nat: TCP and UDP to one address are told once in all") {
     g.segment(kTcpSyn);
     g.wait();
     CHECK(f.count("firmware connects to") == 1);
-    CHECK(f.count(std::format("INFO emulator.net.nat: firmware connects to 127.0.0.1:{} (udp)", remote.port)) == 1);
+    CHECK(f.count(std::format("[I] emulator.net.nat: firmware connects to 127.0.0.1:{} (udp)", remote.port)) == 1);
 }
 
 TEST_CASE("nat: a DNS query is relayed and answered from the gateway") {
@@ -373,7 +373,7 @@ TEST_CASE("nat: a DNS query is relayed and answered from the gateway") {
     // The relay names its upstream once, not as a connection of the firmware.
     f.nat.dns_query(kGuest, 6001, bytes("query"), 0);
     REQUIRE(upstream.receive() == bytes("query"));
-    CHECK(f.count(std::format("INFO emulator.net.nat: DNS relayed to 127.0.0.1:{}", upstream.port)) == 1);
+    CHECK(f.count(std::format("[I] emulator.net.nat: DNS relayed to 127.0.0.1:{}", upstream.port)) == 1);
     CHECK(f.count("firmware connects to") == 0);
     f.sent.clear();
     upstream.answer(bytes("answer"));
@@ -440,7 +440,7 @@ TEST_CASE("nat: without a resolver DNS is dropped with one warning") {
     f.nat.poll(2 * kSec);
     CHECK(f.sent.empty());
     CHECK(f.nat.udp_sessions() == 0);
-    CHECK(f.count("WARNING emulator.net.nat: no DNS server: no IPv4 nameserver in /etc/resolv.conf") == 1);
+    CHECK(f.count("[W] emulator.net.nat: no DNS server: no IPv4 nameserver in /etc/resolv.conf") == 1);
 }
 
 TEST_CASE("nat: an upstream that refuses DNS is told with one warning") {
@@ -456,7 +456,7 @@ TEST_CASE("nat: an upstream that refuses DNS is told with one warning") {
     }
     CHECK(f.sent.empty());
     CHECK(f.count(std::format(
-              "WARNING emulator.net.nat: DNS server 127.0.0.1:{} refuses queries; DNS queries are dropped", port)) ==
+              "[W] emulator.net.nat: DNS server 127.0.0.1:{} refuses queries; DNS queries are dropped", port)) ==
           1);
     CHECK(f.count("WARNING") == 1);
 }
@@ -473,7 +473,7 @@ TEST_CASE("nat: a silent DNS upstream is told with one warning when its sessions
     f.nat.tick(kSec + Nat::kUdpIdleNs);
     CHECK(f.nat.udp_sessions() == 0);
     CHECK(f.count(
-              std::format("WARNING emulator.net.nat: DNS server 127.0.0.1:{} does not answer; DNS queries are dropped",
+              std::format("[W] emulator.net.nat: DNS server 127.0.0.1:{} does not answer; DNS queries are dropped",
                           upstream.port)) == 1);
     CHECK(f.count("WARNING") == 1);
 }
@@ -529,7 +529,7 @@ TEST_CASE("nat: a TCP connection opens only after the host accepts, and carries 
     Guest other(f, kLocal, server.port, 5001);
     int   fd2 = other.open(server);
     CHECK(f.nat.tcp_sessions() == 2);
-    CHECK(f.count(std::format("INFO emulator.net.nat: firmware connects to 127.0.0.1:{} (tcp)", server.port)) == 1);
+    CHECK(f.count(std::format("[I] emulator.net.nat: firmware connects to 127.0.0.1:{} (tcp)", server.port)) == 1);
 
     // Reset closes the host sockets without a word to the firmware.
     f.nat.reset();

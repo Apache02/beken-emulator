@@ -116,7 +116,7 @@ struct Fixture {
 };
 
 std::string alert(const char *logical, int blk, const char *physical) {
-    return std::string("ERROR emulator.flash: ALERT: XIP read of an unreadable block (bad CRC or "
+    return std::string("[E] emulator.flash: ALERT: XIP read of an unreadable block (bad CRC or "
                        "past the end of flash): logical ") +
            logical + ", block " + std::to_string(blk) + ", physical " + physical + "\n";
 }
@@ -330,13 +330,13 @@ TEST_CASE("wp not released ignores write") {
     f.inv.clear();
     f.cmd(WREN);
     f.cmd(SE, 0x1234, false);
-    CHECK(f.out.str() == "WARNING emulator.flash: flash SE at 0x001234 ignored: WP# not released "
+    CHECK(f.out.str() == "[W] emulator.flash: flash SE at 0x001234 ignored: WP# not released "
                          "(operate_sw.wp = 0)\n");
     CHECK(f.flash.raw() == before);
     CHECK(f.rdsr() == 0x02);
     f.w(kWriteData, 0);
     f.cmd(PP, 0x40, false);
-    CHECK(f.count("WARNING emulator.flash: flash PP at 0x000040 ignored: WP# not released "
+    CHECK(f.count("[W] emulator.flash: flash PP at 0x000040 ignored: WP# not released "
                   "(operate_sw.wp = 0)\n") == 1);
     f.cmd(PP, 0x40, false);
     CHECK(f.count("flash PP at 0x000040 ignored: WP# not released") == 2);
@@ -536,12 +536,12 @@ TEST_CASE("bp bits suppress pp and ignore erase, wrsr allowed") {
     f.cmd(WREN);
     f.w(kWriteData, 0x12345678);
     f.cmd(PP, 0x2040);
-    CHECK(f.out.str() == "WARNING emulator.flash: flash PP at 0x002040 suppressed: block protection is set in "
+    CHECK(f.out.str() == "[W] emulator.flash: flash PP at 0x002040 suppressed: block protection is set in "
                          "the status register\n");
     CHECK(f.rdsr() == 0x1E); // WEL not consumed
     for (uint32_t op : {SE, BE1, BE2, CE}) f.cmd(op, 0x1000);
     for (const char *n : {"SE", "BE1", "BE2", "CE"})
-        CHECK(f.count(std::string("WARNING emulator.flash: flash ") + n +
+        CHECK(f.count(std::string("[W] emulator.flash: flash ") + n +
                       " at 0x001000 ignored: block protection is set in the status register\n") == 1);
     CHECK(f.rdsr() == 0x1C); // the first erase consumed WEL
     CHECK(f.flash.raw() == before);
@@ -801,7 +801,7 @@ TEST_CASE("mount creates a missing file with the present contents") {
     CHECK(fs::file_size(file.path) == kSmall);
     CHECK(file.bytes() == f.flash.raw());
     CHECK(f.flash.raw() == cat(block(0x10), std::vector<uint8_t>(3 * 34, 0xFF)));
-    CHECK(f.count("INFO emulator.flash: flash: created " + file.path.string()) == 1);
+    CHECK(f.count("[I] emulator.flash: flash: created " + file.path.string()) == 1);
     // The whole XIP window is invalidated.
     CHECK(f.inv.back() == Call{"xip", 0, 0x1000});
 }
@@ -816,7 +816,7 @@ TEST_CASE("mount of an existing file replaces the contents") {
     f.flash.mount(file.path.string());
     CHECK(f.flash.raw() == image);
     CHECK(file.bytes() == image);
-    CHECK(f.count("INFO emulator.flash: flash: mounted " + file.path.string()) == 1);
+    CHECK(f.count("[I] emulator.flash: flash: mounted " + file.path.string()) == 1);
     // Cached verdicts are forgotten: block 0 reads the file, block 1 has a bad CRC.
     CHECK(f.flash.read("xip", 0, 4) == 0x23222120);
     CHECK(f.xip_fault(32).has_value());
@@ -859,7 +859,7 @@ TEST_CASE("a load that changes nothing in the mounted file says so") {
     CHECK(f.count("unchanged") == 0);
     f.inv.clear();
     f.flash.load(34, block(0x30));
-    CHECK(f.count("INFO emulator.flash: load of 34 bytes at 0x22 leaves " + file.path.string() + " unchanged") == 1);
+    CHECK(f.count("[I] emulator.flash: load of 34 bytes at 0x22 leaves " + file.path.string() + " unchanged") == 1);
     CHECK(f.inv.empty());
     // Without a file nothing is said.
     Fixture plain(kSmall);

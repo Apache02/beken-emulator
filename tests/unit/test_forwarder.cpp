@@ -503,7 +503,7 @@ TEST_CASE("TCP: a client waits for an address and is dropped after 30 seconds wi
     rig.now = 35 * kSec;
     rig.poll(fw);
     CHECK(fw.connections() == 0);
-    CHECK(rig.log.str() == "WARNING emulator.net.forward: connection from 127.0.0.1:" + [&] {
+    CHECK(rig.log.str() == "[W] emulator.net.forward: connection from 127.0.0.1:" + [&] {
         sockaddr_in sa{};
         socklen_t   len = sizeof sa;
         ::getsockname(client.fd, reinterpret_cast<sockaddr *>(&sa), &len);

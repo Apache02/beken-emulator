@@ -125,15 +125,15 @@ TEST_CASE("unknown logs every access at INFO with pc and opcode") {
     Fixture f;
     f.insn = Instruction{0x00001234, 0xE5801000, 4};
     f.w(0x10, 0x55);
-    CHECK(f.last().ends_with("BLK write +0x0010 (4 bytes) = 0x00000055  pc 0x00001234 insn E5801000"));
+    CHECK(f.last().ends_with("BLK write +0x0010 (4 bytes) = 0x00000055  pc 0x00001234 opcode E5801000"));
     CHECK(f.last().find("INFO") != std::string::npos);
     CHECK(f.last().find("emulator.unknown") != std::string::npos);
     f.r(0x10);
-    CHECK(f.last().ends_with("BLK read +0x0010 (4 bytes) = 0x00000055  pc 0x00001234 insn E5801000"));
+    CHECK(f.last().ends_with("BLK read +0x0010 (4 bytes) = 0x00000055  pc 0x00001234 opcode E5801000"));
     // Thumb opcodes have four digits.
     f.insn = Instruction{0x00002000, 0x6008, 2};
     f.r(0x14);
-    CHECK(f.last().ends_with("BLK read +0x0014 (4 bytes) = 0x00000000  pc 0x00002000 insn 6008"));
+    CHECK(f.last().ends_with("BLK read +0x0014 (4 bytes) = 0x00000000  pc 0x00002000 opcode 6008"));
 }
 
 TEST_CASE("unknown logs at the level it is given") {
@@ -145,7 +145,7 @@ TEST_CASE("unknown logs at the level it is given") {
     CHECK(out.str().empty()); // the default level is INFO
     Logger::set_level("unknown", Level::Debug);
     block.write("regs", 0x10, 4, 0x55);
-    CHECK(out.str() == "DEBUG emulator.unknown: BLK write +0x0010 (4 bytes) = 0x00000055\n");
+    CHECK(out.str() == "[D] emulator.unknown: BLK write +0x0010 (4 bytes) = 0x00000055\n");
     Logger::reset_for_tests();
 }
 

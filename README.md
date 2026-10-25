@@ -65,9 +65,10 @@ instead (`--uart1 stdio` and `--uart2 stdio` are shorthands for `UART1` and
 reaching the firmware); `--uart NAME=/dev/ttyUSB0` connects it to a real serial port at
 115200 baud instead; `--i2c NAME=TYPE[@ADDRESS]` attaches a device (for example `hi704`)
 to the I2C controller module `NAME` (`--i2c1 TYPE` is the shorthand for
-`I2C1`); `--log-level NAME=LEVEL` sets the level (`debug`, `info`, `warning` or
-`error`) of one logger, for example `--log-level bus=debug`, or of all of them with
-`--log-level all=debug`; later options win. The emulator runs until it receives SIGINT or SIGTERM.
+`I2C1`); `--log-level NAME=LEVEL` sets the level (`debug`, `info`, `warning`,
+`error` or `none`, which silences the logger) of one logger, for example
+`--log-level bus=debug`, or of all of them with `--log-level all=debug`; later
+options win. The emulator runs until it receives SIGINT or SIGTERM.
 
 ### Flash file
 

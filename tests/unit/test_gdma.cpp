@@ -424,7 +424,7 @@ TEST_CASE("gdma logs configuration, start and completion at DEBUG") {
     f.run_to_end();
     f.w(kStatus, 1);
     CHECK(f.text().find("ch0 start: DTCM 0x00000100 -> DTCM 0x00000400, 64 bytes (16 writes), src 32-bit +4, dst "
-                        "32-bit +4, irq: fin_int, est 1.0 us") != std::string::npos);
+                        "32-bit +4, irq: fin, est 1.0 us") != std::string::npos);
     CHECK(f.text().find("ch0 done: 64 bytes copied") != std::string::npos);
     CHECK(f.text().find("ch0 finish flag set") != std::string::npos);
     CHECK(f.text().find("ch0 fin flag cleared by software") != std::string::npos);

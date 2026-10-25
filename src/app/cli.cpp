@@ -38,7 +38,7 @@ std::string usage() {
            "  --log-level NAME=LEVEL\n"
            "                       Set the level of the logger NAME (for example bus,\n"
            "                       net.stack) or of every logger with `all`; LEVEL is\n"
-           "                       debug, info, warning or error; repeatable\n"
+           "                       debug, info, warning, error or none; repeatable\n"
            "  --uart NAME=SPEC     Host end of the UART module NAME from the profile:\n"
            "                       pty (default), stdio or a serial device path such as\n"
            "                       /dev/ttyUSB0 (115200 baud); repeatable\n"
@@ -156,7 +156,7 @@ CliOptions parse_cli(int argc, char **argv) {
             if (eq == std::string::npos || eq == 0 || eq + 1 == v.size())
                 throw CliError("--log-level needs NAME=LEVEL");
             std::optional<Level> level = Logger::parse_level(std::string_view(v).substr(eq + 1));
-            if (!level) throw CliError("bad log level '" + v.substr(eq + 1) + "' (want debug, info, warning or error)");
+            if (!level) throw CliError("bad log level '" + v.substr(eq + 1) + "' (want debug, info, warning, error or none)");
             o.log_levels.emplace_back(v.substr(0, eq), *level);
         } else if (opt == "--uart") {
             std::string v  = value();

@@ -57,7 +57,7 @@ struct CliOptions {
 // In `--flash-mount`, text before the first `=` is a module name only when it
 // is letters, digits and underscores; otherwise the whole value is the file.
 // Long options also take `--opt=value`. `--log-level` is repeatable; LEVEL is
-// debug, info, warning or error in any letter case. Throws CliError, e.g. `at
+// debug, info, warning, error or none in any letter case. Throws CliError, e.g. `at
 // least one --load is required`, `--uart needs NAME=SPEC`, `--log-level needs
 // NAME=LEVEL` or `--i2c needs NAME=TYPE[@ADDRESS]`; a
 // bad `--publish` gives the message of parse_publish. `--wifi-password` and

@@ -145,7 +145,7 @@ TEST_CASE("cli log level errors") {
     CHECK(error("bus") == "--log-level needs NAME=LEVEL");
     CHECK(error("=debug") == "--log-level needs NAME=LEVEL");
     CHECK(error("bus=") == "--log-level needs NAME=LEVEL");
-    CHECK(error("bus=loud") == "bad log level 'loud' (want debug, info, warning or error)");
+    CHECK(error("bus=loud") == "bad log level 'loud' (want debug, info, warning, error or none)");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--log-level"}) == "--log-level needs a value");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "-d", "bus"}) == "unknown option -d");
 }

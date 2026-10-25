@@ -238,8 +238,8 @@ std::string describe(uint32_t cfg, uint32_t mux, uint32_t src, uint32_t dst) {
     const uint32_t length = (cfg >> 16) + 1;
     const unsigned sdw = (cfg >> 4) & 3, ddw = (cfg >> 6) & 3;
     std::string    events;
-    if (cfg & 2) events += "fin_int";
-    if (cfg & 4) events += std::string(events.empty() ? "" : "+") + "half_fin_int";
+    if (cfg & 2) events += "fin";
+    if (cfg & 4) events += std::string(events.empty() ? "" : "+") + "h_fin";
     std::string notes;
     if (cfg & 8) notes += ", repeat";
     const uint32_t rd = (mux >> 12) & 0xF, wr = (mux >> 16) & 0xF;
@@ -271,7 +271,7 @@ void Gdma::write_config(unsigned index, Channel &channel, uint32_t value) {
         update_irq();
     } else if (value == 0) {
         log().log(Level::Debug, fmt("ch%u config cleared", index));
-    } else if (!enable) {
+    } else if (!enable && channel.src != 0 && channel.dst != 0) {
         log().log(
             Level::Debug,
             fmt("ch%u config %s", index, describe(channel.config, channel.mux, channel.src, channel.dst).c_str()));
@@ -292,7 +292,7 @@ void Gdma::start(unsigned index, Channel &channel) {
     channel.end_ns          = now + duration;
     channel.half_ns         = now + duration / 2;
     channel.half_pending    = (cfg & 4) != 0;
-    log().log(Level::Debug,
+    log().log(Level::Info,
               fmt("ch%u start: %s, est %s",
                   index,
                   describe(cfg, channel.mux, channel.src, channel.dst).c_str(),

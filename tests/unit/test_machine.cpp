@@ -416,14 +416,14 @@ TEST_CASE("unknown and wifi_mac take a log_level for their stand-in registers") 
     Logger::set_level("unknown", Level::Debug);
     m.module("BLK")->write("regs", 0x00, 4, 1);
     m.module("MAC")->write("pl", 0x100, 4, 2);
-    CHECK(out.str().find("DEBUG emulator.unknown: BLK write +0x0000") != std::string::npos);
-    CHECK(out.str().find("DEBUG emulator.unknown: MAC_PL write +0x0100") != std::string::npos);
+    CHECK(out.str().find("[D] emulator.unknown: BLK write +0x0000") != std::string::npos);
+    CHECK(out.str().find("[D] emulator.unknown: MAC_PL write +0x0100") != std::string::npos);
     Logger::reset_for_tests();
 
     blk.params.set("log_level", "loud");
     p.modules = {blk};
     CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()),
-                         "module BLK: log_level must be debug, info, warning or error",
+                         "module BLK: log_level must be none, debug, info, warning or error",
                          std::invalid_argument);
 }
 
@@ -600,7 +600,7 @@ TEST_CASE("watchdog expiry resets machine end to end") {
     CHECK(m.cpu().reg(Reg::CPSR) == 0xD3);
     CHECK(word_at(m, kRam) == 0xAAAAAAAA);
     CHECK(word_at(m, loop) == 0xEAFFFFFE); // code survives (b .)
-    CHECK(out.str() == "WARNING emulator.wdt: watchdog expired: resetting the chip\n");
+    CHECK(out.str() == "[E] emulator.wdt: watchdog expired after 1 ms: resetting the chip\n");
     REQUIRE(m.module("WDT"));
     CHECK(m.module("WDT")->read("regs", 0, 4) == 0x4000);
     CHECK(m.module("ICU")->read("regs", 0x08, 4) == 0x100);

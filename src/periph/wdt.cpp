@@ -46,7 +46,9 @@ void Wdt::tick(uint64_t now_ns) {
     }
     if (!start_) start_ = now_ns;
     if (now_ns >= *start_ + period_ns()) {
-        Logger::get("wdt").log(Level::Warning, "watchdog expired: resetting the chip");
+        Logger::get("wdt").log(Level::Error,
+                               "watchdog expired after " + std::to_string(period_ns() / 1'000'000) + " ms" +
+                                   ": resetting the chip");
         start_.reset();
         if (reset_chip_) reset_chip_();
     }

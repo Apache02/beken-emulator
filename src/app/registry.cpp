@@ -148,7 +148,7 @@ Level log_level(const ModuleContext &ctx) {
     const ParamValue *v = ctx.params.find("log_level");
     if (!v) return Level::Info;
     std::optional<Level> level = v->string() ? Logger::parse_level(*v->string()) : std::nullopt;
-    if (!level) bad(ctx, "log_level must be debug, info, warning or error");
+    if (!level) bad(ctx, "log_level must be none, debug, info, warning or error");
     return *level;
 }
 

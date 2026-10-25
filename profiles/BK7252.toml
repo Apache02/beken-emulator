@@ -211,6 +211,7 @@ name = "AGC_RAM"
 regs = 0x0100A000
 [module.params]
 size = 2048
+log_level = "none"
 
 [[module]]
 type = "unknown"

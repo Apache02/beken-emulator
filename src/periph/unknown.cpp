@@ -51,6 +51,8 @@ void Unknown::write(const std::string &, uint32_t offset, uint32_t size, uint32_
 }
 
 void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t value) {
+    if (level_ == Level::None) return;
+
     char text[160];
     int  n = std::snprintf(text,
                           sizeof text,
@@ -65,7 +67,7 @@ void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t 
         if (std::optional<Instruction> insn = instruction_()) {
             std::snprintf(text + n,
                           sizeof text - static_cast<size_t>(n),
-                          "  pc 0x%08X insn %0*X",
+                          "  pc 0x%08X opcode %0*X",
                           insn->pc,
                           static_cast<int>(insn->width * 2),
                           insn->opcode);

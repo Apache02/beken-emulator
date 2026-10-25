@@ -443,8 +443,8 @@ TEST_CASE("access point deauthenticates when the handshake fails") {
         CHECK(*f.ap.next_event_ns() <= f.now + AccessPoint::kBeaconIntervalNs);
 
         // One warning about the password per attempt, one about the failure.
-        CHECK(count(f.out.str(), "WARNING emulator.net.ap: message 2 from 22:ac:01:02:03:04 has a bad MIC") == attempt);
-        CHECK(count(f.out.str(), "WARNING emulator.net.ap: 4-way handshake with 22:ac:01:02:03:04 failed") == attempt);
+        CHECK(count(f.out.str(), "[W] emulator.net.ap: message 2 from 22:ac:01:02:03:04 has a bad MIC") == attempt);
+        CHECK(count(f.out.str(), "[W] emulator.net.ap: 4-way handshake with 22:ac:01:02:03:04 failed") == attempt);
         CHECK(count(f.out.str(), "station 22:ac:01:02:03:04 left (4-way handshake failed)") == attempt);
 
         // Nothing of the old association is left: no data, no late handshake message.

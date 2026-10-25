@@ -10,7 +10,8 @@
 
 namespace bk {
 
-enum class Level { Debug, Info, Warning, Error };
+// None is above Error so that a logger set to it drops every message.
+enum class Level { Debug, Info, Warning, Error, None };
 
 // Whether coloured output should be used. A non-empty NO_COLOR always wins,
 // then a non-empty FORCE_COLOR, otherwise colour follows the tty state.

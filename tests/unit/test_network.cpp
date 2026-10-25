@@ -209,7 +209,7 @@ TEST_CASE("network: the station joins, gets an address and carries a published T
     CHECK(air.net.station().state() == Station::State::Scan);
 
     air.join();
-    CHECK(air.log.str().find("INFO emulator.net.wifi: associated with 'cam' (AID 1)") != std::string::npos);
+    CHECK(air.log.str().find("[I] emulator.net.wifi: associated with 'cam' (AID 1)") != std::string::npos);
     CHECK(air.net.stack().ip() == FakeGuest::kLease);
     CHECK(air.net.stack().guest_ip() == FakeGuest::kIp);
 

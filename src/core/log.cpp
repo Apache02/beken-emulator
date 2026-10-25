@@ -23,10 +23,11 @@ State &state() {
 
 const char *level_name(Level l) {
     switch (l) {
-        case Level::Debug: return "DEBUG";
-        case Level::Info: return "INFO";
-        case Level::Warning: return "WARNING";
-        case Level::Error: return "ERROR";
+        case Level::None: return "?";
+        case Level::Debug: return "[D]";
+        case Level::Info: return "[I]";
+        case Level::Warning: return "[W]";
+        case Level::Error: return "[E]";
     }
     return "?";
 }
@@ -36,7 +37,9 @@ const char *level_colour(Level l) {
         case Level::Error: return "\x1b[31m";
         case Level::Warning: return "\x1b[33m";
         case Level::Info: return "\x1b[32m";
-        case Level::Debug: return "";
+        case Level::Debug:
+        case Level::None:
+            return "";
     }
     return "";
 }
@@ -89,6 +92,7 @@ void Logger::set_level(std::string_view suffix, Level level) {
 std::optional<Level> Logger::parse_level(std::string_view text) {
     std::string lower(text);
     for (char &c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "none") return Level::None;
     if (lower == "debug") return Level::Debug;
     if (lower == "info") return Level::Info;
     if (lower == "warning") return Level::Warning;
