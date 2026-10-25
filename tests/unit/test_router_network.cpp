@@ -52,7 +52,7 @@ struct Air {
     std::vector<Bytes> received;
 
     // DNS goes to 127.0.0.1:`dns_port`, a socket of the test, never the host's resolver.
-    explicit Air(std::vector<Publish> publishes = {}, uint16_t dns_port = Nat::kDnsPort)
+    explicit Air(std::vector<Publish> publishes = {}, uint16_t dns_port = Nat::kDnsPort, bool internet = true)
         : net(
               open_ap(),
               std::move(publishes),
@@ -60,7 +60,8 @@ struct Air {
               2 * kMs,
               [this] { return wall; },
               ip4(127, 0, 0, 1),
-              dns_port) {
+              dns_port,
+              internet) {
         net.attach([this](Bytes f) { to_station.push_back(std::move(f)); });
         station.attach([this](Bytes f) { to_net.push_back(std::move(f)); });
         station.set_ethernet_in([this](Bytes f) {
@@ -208,6 +209,39 @@ TEST_CASE("router network: a published UDP client from before the join gets repl
         1000);
     ::close(u);
     CHECK(replied);
+}
+
+TEST_CASE("router network: without internet nothing leaves the LAN") {
+    // The DNS server, played by a socket on 127.0.0.1.
+    int         u = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    sockaddr_in sa{};
+    sa.sin_family      = AF_INET;
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    REQUIRE(u >= 0);
+    REQUIRE(::bind(u, reinterpret_cast<sockaddr *>(&sa), sizeof sa) == 0);
+    socklen_t len = sizeof sa;
+    REQUIRE(::getsockname(u, reinterpret_cast<sockaddr *>(&sa), &len) == 0);
+
+    Air air({}, ntohs(sa.sin_port), false);
+    REQUIRE(air.run_until([&] { return air.bound(); }));
+    auto udp_to = [&](uint32_t dst, uint16_t to) {
+        air.station.send_ethernet(build_ethernet(
+            kRouter,
+            kFw,
+            kEtherIpv4,
+            build_ipv4(ip4(10, 0, 2, 15), dst, kProtoUdp, 1, build_udp(ip4(10, 0, 2, 15), dst, 5000, to, Bytes{'x'}))));
+    };
+    // A DNS query and a datagram to a remote address are dropped.
+    udp_to(ip4(10, 0, 2, 2), 53);
+    udp_to(ip4(203, 0, 113, 10), 4999);
+    for (int i = 0; i < 300; ++i) {
+        air.step();
+        std::this_thread::sleep_for(std::chrono::microseconds(300));
+    }
+    CHECK(air.net.nat().udp_sessions() == 0);
+    uint8_t probe[64];
+    CHECK(::recv(u, probe, sizeof probe, 0) < 0);
+    ::close(u);
 }
 
 TEST_CASE("router network: joining again drops the NAT sessions") {

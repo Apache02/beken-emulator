@@ -58,6 +58,7 @@ TEST_CASE("usage text lists every option") {
                                "--wifi-ap SSID",
                                "--wifi-password PASS",
                                "--wifi-channel N",
+                               "--wifi-internet",
                                "--flash-mount [NAME=]FILE",
                                "-h, --help",
                                "BKEMU_PROFILES"})
@@ -203,6 +204,9 @@ TEST_CASE("cli wifi ap options") {
     CHECK_FALSE(none.wifi_ap);
     CHECK_FALSE(none.wifi_password);
     CHECK(none.wifi_channel == 1);
+    CHECK_FALSE(none.wifi_internet);
+    CHECK_FALSE(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n"}).wifi_internet);
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "--wifi-internet"}).wifi_internet);
 
     CliOptions o = parse({"BK7252",
                           "--load",
@@ -242,8 +246,10 @@ TEST_CASE("cli wifi ap errors") {
           "--wifi-password needs 8 to 63 characters");
     for (const char *bad : {"0", "14", "x", "", "6x", "-1", "99999999999"})
         CHECK_MESSAGE(error({"--wifi-ap", "n", "--wifi-channel", bad}) == "--wifi-channel needs a channel 1-13", bad);
-    CHECK(error({"--wifi-password", "secret12"}) == "--wifi-password and --wifi-channel need --wifi-ap");
-    CHECK(error({"--wifi-channel", "6"}) == "--wifi-password and --wifi-channel need --wifi-ap");
+    CHECK(error({"--wifi-password", "secret12"}) ==
+          "--wifi-password, --wifi-channel and --wifi-internet need --wifi-ap");
+    CHECK(error({"--wifi-channel", "6"}) == "--wifi-password, --wifi-channel and --wifi-internet need --wifi-ap");
+    CHECK(error({"--wifi-internet"}) == "--wifi-password, --wifi-channel and --wifi-internet need --wifi-ap");
     CHECK(error({"--wifi-ap", "n", "--ssid", "cam"}) == "--wifi-ap and --ssid exclude each other");
     CHECK(error({"--ssid", "cam", "--wifi-ap", "n"}) == "--wifi-ap and --ssid exclude each other");
 }

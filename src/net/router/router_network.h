@@ -23,14 +23,17 @@ namespace bk {
 class RouterNetwork : public WifiAir {
   public:
     // Throws ForwardError when a publish cannot be bound. DNS goes to
-    // `dns_upstream`:`dns_port`, by default the host's resolver.
+    // `dns_upstream`:`dns_port`, by default the host's resolver. Without
+    // `internet` the router is not given the NAT: it still serves DHCP, ARP,
+    // ping and the publishes, but traffic beyond the LAN is dropped.
     RouterNetwork(ApConfig                  ap,
                   std::vector<Publish>      publishes,
                   AccessPoint::TunedChannel tuned,
                   uint64_t                  poll_ns      = Network::kDefaultPollNs,
                   Network::WallClock        wall         = Network::steady_wall_ns,
                   std::optional<uint32_t>   dns_upstream = host_resolver(),
-                  uint16_t                  dns_port     = Nat::kDnsPort);
+                  uint16_t                  dns_port     = Nat::kDnsPort,
+                  bool                      internet     = false);
     RouterNetwork(const RouterNetwork &)            = delete;
     RouterNetwork &operator=(const RouterNetwork &) = delete;
 

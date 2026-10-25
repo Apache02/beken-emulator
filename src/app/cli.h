@@ -40,12 +40,14 @@ struct CliOptions {
     std::optional<std::string> wifi_ap;
     std::optional<std::string> wifi_password;
     unsigned                   wifi_channel = 1;
-    bool                       help         = false; // -h/--help: print usage() and exit; nothing else is set
+    // `--wifi-internet`: the virtual router lets the firmware reach the internet (NAT).
+    bool wifi_internet = false;
+    bool help          = false; // -h/--help: print usage() and exit; nothing else is set
 };
 
 // PROFILE --load TARGET:FILE [--load ...] [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
 //         [--i2c NAME=TYPE[@ADDRESS]]... [-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]]...
-//         [--ssid NAME | --wifi-ap SSID [--wifi-password PASS] [--wifi-channel N]]
+//         [--ssid NAME | --wifi-ap SSID [--wifi-password PASS] [--wifi-channel N] [--wifi-internet]]
 //         [--flash-mount [NAME=]FILE]...
 //
 // `--uart1 SPEC` and `--uart2 SPEC` mean `--uart UART1=SPEC` and
@@ -57,7 +59,7 @@ struct CliOptions {
 // least one --load is required`, `--uart needs NAME=SPEC`, `--log-level needs
 // NAME=LEVEL` or `--i2c needs NAME=TYPE[@ADDRESS]`; a
 // bad `--publish` gives the message of parse_publish. `--wifi-password` and
-// `--wifi-channel` need `--wifi-ap`, which excludes `--ssid`. Whether the
+// `--wifi-channel` and `--wifi-internet` need `--wifi-ap`, which excludes `--ssid`. Whether the
 // profile has a MAC to publish to is checked later.
 // `-h`/`--help` stops parsing at once and returns with `help` set; no profile
 // or load is needed then.

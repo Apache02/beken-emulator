@@ -10,7 +10,8 @@ RouterNetwork::RouterNetwork(ApConfig                  ap,
                              uint64_t                  poll_ns,
                              Network::WallClock        wall,
                              std::optional<uint32_t>   dns_upstream,
-                             uint16_t                  dns_port)
+                             uint16_t                  dns_port,
+                             bool                      internet)
     : ap_(std::move(ap), std::move(tuned), Logger::get("net.ap")),
       router_(
           RouterConfig{}, [this](std::vector<uint8_t> frame) { ap_.send_ethernet(frame); }, Logger::get("net.router")),
@@ -23,7 +24,7 @@ RouterNetwork::RouterNetwork(ApConfig                  ap,
                                           Logger::get("net.nat"),
                                           dns_port),
       poll_ns_(poll_ns), wall_(std::move(wall)) {
-    router_.set_nat(&nat_);
+    if (internet) router_.set_nat(&nat_);
     ap_.set_ethernet_in([this](std::vector<uint8_t> frame) { router_.receive(frame, now_); });
     // A new association starts the router afresh. The router's reset ends its
     // flows without a word and forgets its UDP bindings, so the forwarder has

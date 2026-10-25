@@ -132,7 +132,14 @@ int run(int argc, char **argv) {
             bk::AccessPoint::TunedChannel tuned;
             if (rc) tuned = [rc] { return bk::channel_from_rc(rc->peek(0x94)); };
             bk::ApConfig ap{*options.wifi_ap, options.wifi_password, options.wifi_channel};
-            router_network = std::make_unique<bk::RouterNetwork>(std::move(ap), options.publish, std::move(tuned));
+            router_network = std::make_unique<bk::RouterNetwork>(std::move(ap),
+                                                                 options.publish,
+                                                                 std::move(tuned),
+                                                                 bk::Network::kDefaultPollNs,
+                                                                 bk::Network::steady_wall_ns,
+                                                                 bk::host_resolver(),
+                                                                 bk::Nat::kDnsPort,
+                                                                 options.wifi_internet);
             mac->attach(router_network.get());
             for (const bk::Publish &p : router_network->addresses()) std::cout << bk::describe(p) << std::endl;
         } else {

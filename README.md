@@ -114,10 +114,12 @@ virtual access point instead (BSSID `02:00:00:00:00:02`) with a router behind
 it on `10.0.2.0/24`: its DHCP server gives the firmware `10.0.2.15` (mask
 `255.255.255.0`, lease one day), and the gateway `10.0.2.2` answers ARP and
 ping and is the firmware's DNS server. `-p` works the same way in this role:
-host connections reach the firmware from `10.0.2.2`.
+host connections reach the firmware from `10.0.2.2`. The firmware has no
+internet access unless `--wifi-internet` is given (see below): without it
+traffic beyond the LAN is dropped, and DNS queries get no answer.
 
 ```
-build/bkemu BK7252 --load ... --wifi-ap TESTNET --wifi-password 12345678 -p 18080:80
+build/bkemu BK7252 --load ... --wifi-ap TESTNET --wifi-password 12345678 --wifi-internet -p 18080:80
 ```
 
 The network is open unless `--wifi-password PASS` (8 to 63 characters) is
@@ -126,7 +128,8 @@ the 4-way handshake, and the log says so. `--wifi-channel N` (1 to 13, default
 1) picks the channel; the access point is heard only while the firmware's radio
 is tuned to it. `--wifi-ap` and `--ssid` exclude each other.
 
-The router gives the firmware internet access. Its TCP connections and UDP
+With `--wifi-internet` (it needs `--wifi-ap`) the router gives the firmware
+internet access. Its TCP connections and UDP
 datagrams to addresses outside the LAN are made again from ordinary sockets of
 the emulator process (NAT), so the host and the network see plain outgoing
 connections of the emulator; nothing needs root. DNS queries to `10.0.2.2` are

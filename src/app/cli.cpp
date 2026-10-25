@@ -69,6 +69,9 @@ std::string usage() {
            "  --wifi-password PASS The access point's WPA2-PSK passphrase (8-63\n"
            "                       characters); without it the network is open\n"
            "  --wifi-channel N     The access point's channel, 1-13 (default 1)\n"
+           "  --wifi-internet      Let the firmware reach the internet through the router\n"
+           "                       (NAT to the host's network); without it only the LAN,\n"
+           "                       ping and published ports work; needs --wifi-ap\n"
            "  -h, --help           Show this help and exit\n"
            "\n"
            "Environment:\n"
@@ -122,6 +125,8 @@ CliOptions parse_cli(int argc, char **argv) {
             std::string pass = value();
             if (pass.size() < 8 || pass.size() > 63) throw CliError("--wifi-password needs 8 to 63 characters");
             o.wifi_password = std::move(pass);
+        } else if (opt == "--wifi-internet") {
+            o.wifi_internet = true;
         } else if (opt == "--wifi-channel") {
             std::string v = value();
             if (v.empty() || v.size() > 2 ||
@@ -177,8 +182,8 @@ CliOptions parse_cli(int argc, char **argv) {
     }
     if (!have_profile) throw CliError("a profile name is required");
     if (o.loads.empty()) throw CliError("at least one --load is required");
-    if ((o.wifi_password || wifi_channel) && !o.wifi_ap)
-        throw CliError("--wifi-password and --wifi-channel need --wifi-ap");
+    if ((o.wifi_password || wifi_channel || o.wifi_internet) && !o.wifi_ap)
+        throw CliError("--wifi-password, --wifi-channel and --wifi-internet need --wifi-ap");
     if (o.wifi_ap && o.ssid) throw CliError("--wifi-ap and --ssid exclude each other");
     return o;
 }
