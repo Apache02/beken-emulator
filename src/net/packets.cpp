@@ -21,8 +21,8 @@ constexpr uint8_t kCookie[] = {0x63, 0x82, 0x53, 0x63};
 
 constexpr uint8_t kIcmpEchoReply = 0, kIcmpEchoRequest = 8;
 
-constexpr uint8_t kOptPad = 0, kOptRouter = 3, kOptRequested = 50, kOptType = 53, kOptServer = 54, kOptParameters = 55,
-                  kOptEnd = 255;
+constexpr uint8_t kOptPad = 0, kOptMask = 1, kOptRouter = 3, kOptDns = 6, kOptRequested = 50, kOptLease = 51,
+                  kOptType = 53, kOptServer = 54, kOptParameters = 55, kOptEnd = 255;
 
 uint16_t be16(std::span<const uint8_t> b, size_t off) { return uint16_t(b[off] << 8 | b[off + 1]); }
 uint32_t be32(std::span<const uint8_t> b, size_t off) {
@@ -230,7 +230,7 @@ Bytes build_icmp_echo(const IcmpEcho &e) {
 std::optional<Dhcp> parse_dhcp(std::span<const uint8_t> p) {
     if (p.size() < kDhcpMinimum || !std::equal(std::begin(kCookie), std::end(kCookie), p.begin() + kDhcpFixed))
         return std::nullopt;
-    Dhcp d{p[0], be32(p, 4), be32(p, 16), mac_at(p, 28), 0, std::nullopt, std::nullopt};
+    Dhcp d{p[0], be32(p, 4), be32(p, 16), mac_at(p, 28), 0, std::nullopt, std::nullopt, be32(p, 12), std::nullopt};
     for (size_t i = kDhcpMinimum; i < p.size();) {
         uint8_t code = p[i++];
         if (code == kOptPad) continue;
@@ -242,6 +242,7 @@ std::optional<Dhcp> parse_dhcp(std::span<const uint8_t> p) {
         if (code == kOptType && len == 1) d.type = value[0];
         if (code == kOptServer && len >= 4) d.server_id = be32(value, 0);
         if (code == kOptRouter && len >= 4) d.router = be32(value, 0);
+        if (code == kOptRequested && len == 4) d.requested = be32(value, 0);
         i += len;
     }
     return d;
@@ -271,6 +272,42 @@ Bytes build_dhcp_client(
         put32(p, *server_id);
     }
     p.insert(p.end(), {kOptParameters, 3, 1, 3, 6, kOptEnd});
+    return p;
+}
+
+Bytes build_dhcp_server(uint8_t    type,
+                        uint32_t   xid,
+                        const Mac &chaddr,
+                        uint32_t   yiaddr,
+                        uint32_t   server,
+                        uint32_t   mask,
+                        uint32_t   router,
+                        uint32_t   dns,
+                        uint32_t   lease_s) {
+    Bytes p;
+    p.push_back(2); // BOOTREPLY
+    p.push_back(1); // Ethernet
+    p.push_back(6);
+    p.push_back(0); // hops
+    put32(p, xid);
+    put32(p, 0); // secs, flags
+    put32(p, 0); // ciaddr
+    put32(p, yiaddr);
+    p.insert(p.end(), 8, 0); // siaddr, giaddr
+    put_mac(p, chaddr);
+    p.insert(p.end(), 10 + 192, 0); // chaddr padding, sname, file
+    p.insert(p.end(), std::begin(kCookie), std::end(kCookie));
+    p.insert(p.end(), {kOptType, 1, type});
+    auto option32 = [&p](uint8_t code, uint32_t value) {
+        p.insert(p.end(), {code, 4});
+        put32(p, value);
+    };
+    option32(kOptServer, server);
+    option32(kOptLease, lease_s);
+    option32(kOptMask, mask);
+    option32(kOptRouter, router);
+    option32(kOptDns, dns);
+    p.push_back(kOptEnd);
     return p;
 }
 

@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "core/log.h"
-#include "net/stack.h"
+#include "net/guest_link.h"
 
 namespace bk {
 
@@ -44,7 +44,7 @@ class Forwarder {
 
     // Opens a socket per publish; throws ForwardError (after closing what was
     // opened) when one cannot be bound. A host port of 0 takes a free one.
-    Forwarder(Stack &stack, const std::vector<Publish> &publishes);
+    Forwarder(GuestLink &link, const std::vector<Publish> &publishes);
     ~Forwarder();
     Forwarder(const Forwarder &)            = delete;
     Forwarder &operator=(const Forwarder &) = delete;
@@ -74,7 +74,7 @@ class Forwarder {
         std::string          peer;
         uint16_t             guest_port = 0;
         uint64_t             accepted   = 0;
-        Stack::TcpHandle     flow;
+        GuestLink::TcpHandle flow;
         std::vector<uint8_t> to_host; // from the firmware, not yet sent
         size_t               sent      = 0;
         bool                 reset     = false; // the flow ended with a reset
@@ -96,7 +96,7 @@ class Forwarder {
     void serve_udp(Listener &l, uint64_t now);
     void forget_clients(Listener &l);
 
-    Stack                                     &stack_;
+    GuestLink                                 &link_;
     Logger                                    &log_;
     std::vector<Publish>                       addresses_;
     std::vector<Listener>                      listeners_;

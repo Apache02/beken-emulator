@@ -109,6 +109,50 @@ access point called NAME (default: the first open network it sees). Secured
 networks are not joined. `--log-level wifi=debug` and `--log-level net=debug` show the
 register accesses and the network's own debug messages.
 
+For firmware that joins a network as a station, `--wifi-ap SSID` runs a
+virtual access point instead (BSSID `02:00:00:00:00:02`) with a router behind
+it on `10.0.2.0/24`: its DHCP server gives the firmware `10.0.2.15` (mask
+`255.255.255.0`, lease one day), and the gateway `10.0.2.2` answers ARP and
+ping and is the firmware's DNS server. `-p` works the same way in this role:
+host connections reach the firmware from `10.0.2.2`.
+
+```
+build/bkemu BK7252 --load ... --wifi-ap TESTNET --wifi-password 12345678 -p 18080:80
+```
+
+The network is open unless `--wifi-password PASS` (8 to 63 characters) is
+given, which makes it WPA2-PSK (CCMP); a station with a wrong password fails
+the 4-way handshake, and the log says so. `--wifi-channel N` (1 to 13, default
+1) picks the channel; the access point is heard only while the firmware's radio
+is tuned to it. `--wifi-ap` and `--ssid` exclude each other.
+
+The router gives the firmware internet access. Its TCP connections and UDP
+datagrams to addresses outside the LAN are made again from ordinary sockets of
+the emulator process (NAT), so the host and the network see plain outgoing
+connections of the emulator; nothing needs root. DNS queries to `10.0.2.2` are
+relayed to the first IPv4 `nameserver` of the host's `/etc/resolv.conf`. The
+gateway is not a door to the host: apart from published ports, TCP to
+`10.0.2.2` is reset and UDP to it other than DHCP and DNS is dropped, and the
+host's loopback (`127.0.0.0/8`) cannot be reached. The host's other addresses,
+such as its LAN address, are reached like any internet host, and so are
+link-local addresses (`169.254.0.0/16`, e.g. a cloud metadata service at
+`169.254.169.254`): only loopback and the gateway are closed. The log names the
+first TCP or UDP connection to each remote address once (`firmware connects to
+203.0.113.10:80 (tcp)`), and the DNS relay's upstream once (`DNS relayed to
+127.0.0.53:53`). A DNS server that refuses the queries or never answers them
+is reported with one warning.
+
+The emulator runs the firmware about ten times slower than real time, so a
+join takes tens of seconds, and a remote server sees a slow client.
+
+Firmware that runs its own access point next to the station on another channel
+switches its radio between the two, and many frames can then be lost (25 to
+100% ping loss per run was measured with such firmware); putting
+`--wifi-channel` on the channel of the firmware's own access point avoids the
+switching. `--log-level net.ap=debug`, `--log-level net.router=debug` and
+`--log-level net.nat=debug` show the access point's, the router's and the NAT's
+messages.
+
 ### Known limitation: start the host tool after the app banner
 
 Start `bkloader` (or anything that sends input at once) only after the app's

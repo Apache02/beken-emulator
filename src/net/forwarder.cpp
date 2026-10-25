@@ -75,8 +75,8 @@ std::string describe(const Publish &p) {
     return std::format("{} {}:{} -> guest port {}", p.udp ? "udp" : "tcp", p.host_ip, p.host_port, p.guest_port);
 }
 
-Forwarder::Forwarder(Stack &stack, const std::vector<Publish> &publishes)
-    : stack_(stack), log_(Logger::get("net.forward")) {
+Forwarder::Forwarder(GuestLink &link, const std::vector<Publish> &publishes)
+    : link_(link), log_(Logger::get("net.forward")) {
     try {
         for (const Publish &p : publishes) {
             auto fail = [&](int e, const std::string &why) {
@@ -132,7 +132,7 @@ void Forwarder::drop(Connection &c) {
 void Forwarder::forget_clients(Listener &l) {
     auto it = clients_.find(l.fd);
     if (it == clients_.end()) return;
-    for (auto &[key, client] : it->second) stack_.unbind_udp(client.local_port);
+    for (auto &[key, client] : it->second) link_.unbind_udp(client.local_port);
     clients_.erase(it);
 }
 
@@ -172,7 +172,7 @@ bool Forwarder::serve(Connection &c, uint64_t now) {
         // The flow's callbacks point at the connection, which sits in a list
         // and so keeps its address until it is dropped.
         Connection *self = &c;
-        c.flow           = stack_.open_tcp(
+        c.flow           = link_.open_tcp(
             c.guest_port,
             [self](std::span<const uint8_t> data) {
                 self->to_host.insert(self->to_host.end(), data.begin(), data.end());
@@ -247,14 +247,14 @@ void Forwarder::serve_udp(Listener &l, uint64_t now) {
         UdpKey key{sa.sin_addr.s_addr, sa.sin_port};
         auto   it = clients.find(key);
         if (it == clients.end()) {
-            uint16_t port = stack_.allocate_port();
+            uint16_t port = link_.allocate_port();
             if (port == 0) {
                 log_.log(Level::Debug, std::format("datagram from {} dropped: no free port", address_text(sa)));
                 continue;
             }
             int fd = l.fd;
             // Replies go back through the published socket to this client.
-            stack_.bind_udp(port, [this, fd, sa, key](uint16_t, std::span<const uint8_t> payload) {
+            link_.bind_udp(port, [this, fd, sa, key](uint16_t, std::span<const uint8_t> payload) {
                 ::sendto(fd,
                          payload.data(),
                          payload.size(),
@@ -272,13 +272,13 @@ void Forwarder::serve_udp(Listener &l, uint64_t now) {
             it = clients.emplace(key, UdpClient{port, now}).first;
         }
         it->second.last_seen = now;
-        if (!stack_.send_udp(it->second.local_port, l.publish.guest_port, {buf.data(), size_t(n)}))
+        if (!link_.send_udp(it->second.local_port, l.publish.guest_port, {buf.data(), size_t(n)}))
             log_.log(Level::Debug,
                      std::format("datagram from {} dropped: the firmware has no address", address_text(sa)));
     }
     for (auto it = clients.begin(); it != clients.end();) {
         if (now - it->second.last_seen >= UDP_IDLE_NS) {
-            stack_.unbind_udp(it->second.local_port);
+            link_.unbind_udp(it->second.local_port);
             it = clients.erase(it);
         } else {
             ++it;

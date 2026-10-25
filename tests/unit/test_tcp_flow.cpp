@@ -682,3 +682,176 @@ TEST_CASE("tcp flow: sequence numbers wrap around") {
     f.peer(kTcpAck, 0, 0xfffffff1 + 40, bytes(4));
     CHECK(f.received == bytes(4));
 }
+
+namespace {
+
+// A flow on the passive side: the peer's SYN has just arrived.
+struct Passive {
+    FakeLink                 link;
+    int                      closed_calls = 0;
+    bool                     closed_reset = false;
+    Bytes                    received;
+    int                      peer_closed = 0;
+    std::unique_ptr<TcpFlow> flow;
+
+    Passive() {
+        flow = std::make_unique<TcpFlow>(
+            link,
+            kLocal,
+            kPeer,
+            kIss,
+            [this](std::span<const uint8_t> d) { received.insert(received.end(), d.begin(), d.end()); },
+            [this] { ++peer_closed; },
+            [this](bool reset) {
+                ++closed_calls;
+                closed_reset = reset;
+            });
+    }
+
+    Tcp  syn() const { return Tcp{kPeer, kLocal, 1000, 0, kTcpSyn, 8192, uint16_t(1200), {}}; }
+    void peer(uint8_t flags, uint32_t seq, uint32_t ack, const Bytes &data = {}) {
+        flow->receive(Tcp{kPeer, kLocal, seq, ack, flags, 8192, std::nullopt, data});
+    }
+};
+
+} // namespace
+
+TEST_CASE("tcp flow: accept answers a SYN with SYN-ACK and opens on the ACK") {
+    Passive p;
+    p.link.now = 2 * kSec;
+    p.flow->accept(p.syn());
+    CHECK(p.flow->state() == TcpFlow::State::SynReceived);
+    REQUIRE(p.link.out.size() == 1);
+    const Seg &s = p.link.out[0];
+    CHECK(s.src_port == kLocal);
+    CHECK(s.dst_port == kPeer);
+    CHECK(s.flags == (kTcpSyn | kTcpAck));
+    CHECK(s.seq == kIss);
+    CHECK(s.ack == 1001);
+    CHECK(s.mss == 1400);
+    CHECK(p.flow->deadline() == 3 * kSec);
+
+    p.link.out.clear();
+    p.peer(kTcpAck, 1001, kIss + 1);
+    CHECK(p.flow->state() == TcpFlow::State::Open);
+    CHECK(p.flow->mss() == 1200);
+    CHECK_FALSE(p.flow->deadline());
+
+    p.flow->write(Bytes{'h', 'i'});
+    REQUIRE(p.link.out.size() == 1);
+    CHECK(p.link.out[0].seq == kIss + 1);
+    CHECK(p.link.out[0].payload == Bytes{'h', 'i'});
+}
+
+TEST_CASE("tcp flow: SYN-ACK is retransmitted and the flow gives up after MAX_TRIES") {
+    Passive p;
+    p.flow->accept(p.syn());
+    REQUIRE(p.link.out.size() == 1);
+    for (unsigned i = 1; i < TcpFlow::MAX_TRIES; ++i) {
+        REQUIRE(p.flow->deadline());
+        p.link.now = *p.flow->deadline();
+        p.flow->tick();
+        CHECK(p.link.out.size() == i + 1);
+        CHECK(p.link.out.back().flags == (kTcpSyn | kTcpAck));
+        CHECK(p.link.out.back().seq == kIss);
+    }
+    CHECK(p.link.out.size() == TcpFlow::MAX_TRIES);
+    CHECK_FALSE(p.flow->finished());
+    p.link.now = *p.flow->deadline();
+    p.flow->tick();
+    CHECK(p.link.out.size() == TcpFlow::MAX_TRIES);
+    CHECK(p.flow->finished());
+    CHECK(p.closed_calls == 1);
+    CHECK(p.closed_reset);
+}
+
+TEST_CASE("tcp flow: a repeated SYN repeats the SYN-ACK; an RST ends it") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.flow->receive(p.syn());
+    REQUIRE(p.link.out.size() == 1);
+    CHECK(p.link.out[0].flags == (kTcpSyn | kTcpAck));
+    CHECK(p.link.out[0].seq == kIss);
+    CHECK(p.flow->state() == TcpFlow::State::SynReceived);
+
+    p.peer(kTcpRst, 1001, 0);
+    CHECK(p.flow->finished());
+    CHECK(p.closed_calls == 1);
+    CHECK(p.closed_reset);
+}
+
+TEST_CASE("tcp flow: a handshake ACK with a wrong number gets an RST and the flow waits on") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.peer(kTcpAck, 1001, kIss + 77);
+    REQUIRE(p.link.out.size() == 1);
+    CHECK(p.link.out[0].flags == kTcpRst);
+    CHECK(p.link.out[0].seq == kIss + 77);
+    CHECK(p.flow->state() == TcpFlow::State::SynReceived);
+    CHECK(p.closed_calls == 0);
+}
+
+TEST_CASE("tcp flow: a segment without ACK, SYN or RST is ignored in SynReceived") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.peer(0, 1001, 0);
+    p.peer(kTcpFin, 1001, 0);
+    CHECK(p.link.out.empty());
+    CHECK(p.flow->state() == TcpFlow::State::SynReceived);
+    CHECK(p.peer_closed == 0);
+}
+
+TEST_CASE("tcp flow: data on the handshake ACK is delivered and acknowledged") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.peer(kTcpAck | kTcpPsh, 1001, kIss + 1, bytes(5));
+    CHECK(p.flow->state() == TcpFlow::State::Open);
+    CHECK(p.received == bytes(5));
+    REQUIRE(p.link.out.size() == 1);
+    CHECK(p.link.out[0].flags == kTcpAck);
+    CHECK(p.link.out[0].ack == 1006);
+}
+
+TEST_CASE("tcp flow: a FIN on the handshake ACK is reported and acknowledged") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.peer(kTcpAck | kTcpFin, 1001, kIss + 1);
+    CHECK(p.flow->state() == TcpFlow::State::Open);
+    CHECK(p.peer_closed == 1);
+    REQUIRE(p.link.out.size() == 1);
+    CHECK(p.link.out[0].flags == kTcpAck);
+    CHECK(p.link.out[0].ack == 1002);
+}
+
+TEST_CASE("tcp flow: bytes and a close queued in SynReceived go out after the ACK") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.flow->write(Bytes{'h', 'i'});
+    p.flow->close();
+    CHECK(p.link.out.empty());
+
+    p.peer(kTcpAck, 1001, kIss + 1);
+    REQUIRE(p.link.out.size() == 2);
+    CHECK(p.link.out[0].seq == kIss + 1);
+    CHECK(p.link.out[0].payload == Bytes{'h', 'i'});
+    CHECK(p.link.out[1].flags == (kTcpFin | kTcpAck));
+    CHECK(p.link.out[1].seq == kIss + 3);
+}
+
+TEST_CASE("tcp flow: abort in SynReceived sends an RST without on_closed") {
+    Passive p;
+    p.flow->accept(p.syn());
+    p.link.out.clear();
+    p.flow->abort();
+    REQUIRE(p.link.out.size() == 1);
+    CHECK((p.link.out[0].flags & kTcpRst));
+    CHECK(p.link.out[0].seq == kIss + 1);
+    CHECK(p.flow->finished());
+    CHECK(p.closed_calls == 0);
+}

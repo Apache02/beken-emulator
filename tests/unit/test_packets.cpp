@@ -298,6 +298,57 @@ TEST_CASE("dhcp: a client message parses back, short or cookie-less messages are
     CHECK_FALSE(parse_dhcp(cut));
 }
 
+TEST_CASE("dhcp: requested address and ciaddr are parsed") {
+    Bytes p = build_dhcp_client(DhcpRequest, 7, kA, ip4(10, 0, 2, 15), std::nullopt);
+    auto  d = parse_dhcp(p);
+    REQUIRE(d);
+    CHECK(d->requested == ip4(10, 0, 2, 15));
+    CHECK(d->ciaddr == 0);
+
+    Bytes renew = build_dhcp_client(DhcpRequest, 7, kA, std::nullopt, std::nullopt);
+    renew[12]   = 10;
+    renew[14]   = 2;
+    renew[15]   = 15;
+    d           = parse_dhcp(renew);
+    REQUIRE(d);
+    CHECK_FALSE(d->requested);
+    CHECK(d->ciaddr == ip4(10, 0, 2, 15));
+}
+
+TEST_CASE("dhcp server message round-trips through parse_dhcp") {
+    Bytes p = build_dhcp_server(DhcpOffer,
+                                0x01020304,
+                                kB,
+                                ip4(10, 0, 2, 15),
+                                ip4(10, 0, 2, 2),
+                                ip4(255, 255, 255, 0),
+                                ip4(10, 0, 2, 3),
+                                ip4(10, 0, 2, 4),
+                                86400);
+    auto  d = parse_dhcp(p);
+    REQUIRE(d);
+    CHECK(d->op == 2);
+    CHECK(d->xid == 0x01020304);
+    CHECK(d->yiaddr == ip4(10, 0, 2, 15));
+    CHECK(d->ciaddr == 0);
+    CHECK(d->chaddr == kB);
+    CHECK(d->type == DhcpOffer);
+    CHECK(d->server_id == ip4(10, 0, 2, 2));
+    CHECK(d->router == ip4(10, 0, 2, 3));
+    CHECK_FALSE(d->requested);
+
+    // The fixed part: BOOTREPLY, Ethernet, no flags, siaddr 0.
+    REQUIRE(p.size() > 240);
+    CHECK(p[1] == 1);
+    CHECK(p[2] == 6);
+    CHECK(p[10] == 0);
+    CHECK(p[20] == 0);
+    // The options, in order.
+    Bytes options(p.begin() + 240, p.end());
+    CHECK(options == Bytes{53,  1,   2,   54, 4, 10, 0,  2, 2, 51, 4, 0, 1,  0x51, 0x80, 1, 4,
+                           255, 255, 255, 0,  3, 4,  10, 0, 2, 3,  6, 4, 10, 0,    2,    4, 255});
+}
+
 TEST_CASE("tcp: a SYN with the MSS option has the exact wire layout") {
     const Bytes data;
     Bytes syn = build_tcp(ip4(10, 0, 0, 2), ip4(10, 0, 0, 1), {40000, 80, 0x01020304, 0, kTcpSyn, 16384, 1400, data});

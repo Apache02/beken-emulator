@@ -119,8 +119,21 @@ struct Dhcp {
     uint8_t                 type; // option 53, 0 when absent
     std::optional<uint32_t> server_id;
     std::optional<uint32_t> router;
+    uint32_t                ciaddr = 0;
+    std::optional<uint32_t> requested; // option 50
 };
 std::optional<Dhcp> parse_dhcp(std::span<const uint8_t> payload);
+// A server message (op 2) with the options server id, lease time, subnet
+// mask, router and DNS. No flags and no siaddr: the replies are broadcast.
+Bytes build_dhcp_server(uint8_t    type,
+                        uint32_t   xid,
+                        const Mac &chaddr,
+                        uint32_t   yiaddr,
+                        uint32_t   server,
+                        uint32_t   mask,
+                        uint32_t   router,
+                        uint32_t   dns,
+                        uint32_t   lease_s);
 // A client message (op 1) with the parameter request list for subnet mask,
 // router and DNS.
 Bytes build_dhcp_client(

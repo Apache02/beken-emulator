@@ -20,13 +20,13 @@ class TcpLink {
     virtual uint64_t now_ns() const                            = 0;
 };
 
-// One TCP connection opened by the host towards the firmware. Only the active
-// open exists; the sequence space, window and retransmission are kept as
+// One TCP connection, opened by us (start) or by the peer (accept). The
+// sequence space, window and retransmission are kept as
 // simple as the virtual link allows (no congestion control, no reordering
 // buffer).
 class TcpFlow {
   public:
-    enum class State { SynSent, Open, Ended };
+    enum class State { SynSent, SynReceived, Open, Ended };
 
     using Deliver    = std::function<void(std::span<const uint8_t>)>;
     using PeerClosed = std::function<void()>;
@@ -49,6 +49,9 @@ class TcpFlow {
 
     // Sends the SYN.
     void start();
+    // The passive open: takes the peer's ISN, window and MSS from its SYN and
+    // answers SYN|ACK, repeated like the SYN until the peer's ACK arrives.
+    void accept(const packets::Tcp &syn);
     void receive(const packets::Tcp &segment);
     // Runs the retransmission timer if it is due.
     void tick();
@@ -77,6 +80,8 @@ class TcpFlow {
     void
     send(uint8_t flags, uint32_t seq, std::span<const uint8_t> data = {}, std::optional<uint16_t> mss = std::nullopt);
     void send_syn();
+    void send_syn_ack();
+    void on_syn_received(const packets::Tcp &seg);
     void send_ack() { send(packets::kTcpAck, snd_nxt_); }
     void on_syn_sent(const packets::Tcp &seg);
     void on_open(const packets::Tcp &seg);

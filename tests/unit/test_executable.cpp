@@ -354,6 +354,25 @@ TEST_CASE("executable publish needs a MAC module") {
     CHECK(error("--ssid", "cam") == "error: --ssid needs a profile with a WiFi MAC module named MAC\n");
 }
 
+TEST_CASE("executable --wifi-ap needs a MAC module") {
+    TempDir  dir;
+    fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});
+    // A profile without a WiFi MAC.
+    fs::path profiles = dir.path / "profiles";
+    fs::create_directories(profiles);
+    std::ofstream(profiles / "NOMAC.toml") << "name = \"NOMAC\"\ninsns_per_us = 100\n"
+                                              "peripheral_window = [0x00800000, 0x00100000]\n"
+                                              "[[memory]]\nname = \"RAM\"\nbase = 0x00400000\nsize = 0x1000\n"
+                                              "[alias]\nRAM = 0x00400000\n";
+    Child c({"NOMAC", "--load", "RAM:" + image.string(), "--wifi-ap", "TESTNET", "-p", "8080:80"},
+            false,
+            profiles.string());
+    auto  status = c.wait_exit(2000ms);
+    REQUIRE(status.has_value());
+    CHECK(*status == 2);
+    CHECK(c.err_text == "error: --wifi-ap needs a profile with a WiFi MAC module named MAC\n");
+}
+
 TEST_CASE("executable publishes a port, prints it and stops on SIGTERM") {
     TempDir  dir;
     fs::path image = flash_image(dir, "prog.bin", {kBranchSelf});

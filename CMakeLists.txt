@@ -56,6 +56,13 @@ add_library(bk_core STATIC
         src/net/station.cpp
         src/net/forwarder.cpp
         src/net/network.cpp
+        src/net/router/crypto.cpp
+        src/net/router/access_point.cpp
+        src/net/router/authenticator.cpp
+        src/net/router/router.cpp
+        src/net/router/router_network.cpp
+        src/net/router/nat.cpp
+        src/net/router/resolver.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/generated/default_picture.cpp"
         src/periph/wdt.cpp)
 target_include_directories(bk_core PUBLIC src)
@@ -82,6 +89,12 @@ add_executable(unit_tests
         tests/unit/test_tcp_flow.cpp
         tests/unit/test_forwarder.cpp
         tests/unit/test_network.cpp
+        tests/unit/test_crypto.cpp
+        tests/unit/test_access_point.cpp
+        tests/unit/test_authenticator.cpp
+        tests/unit/test_router.cpp
+        tests/unit/test_router_network.cpp
+        tests/unit/test_nat.cpp
         tests/unit/test_i2c1.cpp
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp

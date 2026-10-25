@@ -22,9 +22,11 @@
 #include "core/profile_loader.h"
 #include "i2c/catalog.h"
 #include "net/network.h"
+#include "net/router/router_network.h"
 #include "periph/flash.h"
 #include "periph/i2c1.h"
 #include "periph/uart.h"
+#include "periph/unknown.h"
 #include "periph/wifi/mac.h"
 
 namespace {
@@ -113,16 +115,31 @@ int run(int argc, char **argv) {
 
     // Declared after the machine, so it goes first; the MAC is detached from it
     // before that.
-    std::unique_ptr<bk::Network> network;
-    bk::WifiMac                 *mac = nullptr;
-    if (!options.publish.empty() || options.ssid) {
+    std::unique_ptr<bk::Network>       network;
+    std::unique_ptr<bk::RouterNetwork> router_network;
+    bk::WifiMac                       *mac = nullptr;
+    if (!options.publish.empty() || options.ssid || options.wifi_ap) {
         mac = dynamic_cast<bk::WifiMac *>(machine.module("MAC"));
         if (!mac)
-            throw std::invalid_argument(std::string(options.publish.empty() ? "--ssid" : "--publish") +
+            throw std::invalid_argument(std::string(options.wifi_ap           ? "--wifi-ap"
+                                                    : options.publish.empty() ? "--ssid"
+                                                                              : "--publish") +
                                         " needs a profile with a WiFi MAC module named MAC");
-        network = std::make_unique<bk::Network>(options.publish, bk::Network::kDefaultMac, options.ssid);
-        mac->attach(network.get());
-        for (const bk::Publish &p : network->addresses()) std::cout << bk::describe(p) << std::endl;
+        if (options.wifi_ap) {
+            // The access point is heard only while the firmware's radio is
+            // tuned to its channel, which the RC stand-in holds.
+            auto                         *rc = dynamic_cast<bk::Unknown *>(machine.module("RC"));
+            bk::AccessPoint::TunedChannel tuned;
+            if (rc) tuned = [rc] { return bk::channel_from_rc(rc->peek(0x94)); };
+            bk::ApConfig ap{*options.wifi_ap, options.wifi_password, options.wifi_channel};
+            router_network = std::make_unique<bk::RouterNetwork>(std::move(ap), options.publish, std::move(tuned));
+            mac->attach(router_network.get());
+            for (const bk::Publish &p : router_network->addresses()) std::cout << bk::describe(p) << std::endl;
+        } else {
+            network = std::make_unique<bk::Network>(options.publish, bk::Network::kDefaultMac, options.ssid);
+            mac->attach(network.get());
+            for (const bk::Publish &p : network->addresses()) std::cout << bk::describe(p) << std::endl;
+        }
     }
 
     // A write to a closed stdout must not kill the emulator.
@@ -151,10 +168,9 @@ int run(int argc, char **argv) {
     machine.cpu().reset(0);
     machine.scheduler().run_forever([] { return g_stop != 0; });
 
-    if (network) {
-        mac->attach(nullptr);
-        network->close();
-    }
+    if (mac) mac->attach(nullptr);
+    if (network) network->close();
+    if (router_network) router_network->close();
     // Detach before the endpoints go away.
     for (const auto &[name, endpoint] : endpoints)
         if (auto *uart = dynamic_cast<bk::Uart *>(machine.module(name))) uart->attach(nullptr);

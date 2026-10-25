@@ -35,12 +35,18 @@ struct CliOptions {
     std::vector<Publish> publish;
     // `--ssid`: the only network the virtual station joins.
     std::optional<std::string> ssid;
-    bool                       help = false; // -h/--help: print usage() and exit; nothing else is set
+    // `--wifi-ap`: the SSID of a virtual access point the firmware joins as a
+    // station; `--wifi-password` makes it WPA2-PSK, `--wifi-channel` sets its channel.
+    std::optional<std::string> wifi_ap;
+    std::optional<std::string> wifi_password;
+    unsigned                   wifi_channel = 1;
+    bool                       help         = false; // -h/--help: print usage() and exit; nothing else is set
 };
 
 // PROFILE --load TARGET:FILE [--load ...] [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
 //         [--i2c NAME=TYPE[@ADDRESS]]... [-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]]...
-//         [--ssid NAME] [--flash-mount [NAME=]FILE]...
+//         [--ssid NAME | --wifi-ap SSID [--wifi-password PASS] [--wifi-channel N]]
+//         [--flash-mount [NAME=]FILE]...
 //
 // `--uart1 SPEC` and `--uart2 SPEC` mean `--uart UART1=SPEC` and
 // `--uart UART2=SPEC`; `--i2c1 TYPE[@ADDRESS]` means `--i2c I2C1=TYPE[@ADDRESS]`.
@@ -50,8 +56,9 @@ struct CliOptions {
 // debug, info, warning or error in any letter case. Throws CliError, e.g. `at
 // least one --load is required`, `--uart needs NAME=SPEC`, `--log-level needs
 // NAME=LEVEL` or `--i2c needs NAME=TYPE[@ADDRESS]`; a
-// bad `--publish` gives the message of parse_publish. Whether the profile has
-// a MAC to publish to is checked later.
+// bad `--publish` gives the message of parse_publish. `--wifi-password` and
+// `--wifi-channel` need `--wifi-ap`, which excludes `--ssid`. Whether the
+// profile has a MAC to publish to is checked later.
 // `-h`/`--help` stops parsing at once and returns with `help` set; no profile
 // or load is needed then.
 CliOptions parse_cli(int argc, char **argv);

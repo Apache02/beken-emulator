@@ -32,6 +32,18 @@ void TcpFlow::start() {
     send_syn();
 }
 
+void TcpFlow::accept(const Tcp &syn) {
+    state_   = State::SynReceived;
+    rcv_nxt_ = syn.seq + 1;
+    snd_wnd_ = syn.window;
+    mss_     = std::min<uint16_t>(OUR_MSS, syn.mss && *syn.mss ? *syn.mss : DEFAULT_PEER_MSS);
+    snd_una_ = iss_;
+    snd_nxt_ = snd_max_ = iss_ + 1;
+    tries_              = 1;
+    deadline_           = link_.now_ns() + RTO_NS;
+    send_syn_ack();
+}
+
 void TcpFlow::send(uint8_t flags, uint32_t seq, std::span<const uint8_t> data, std::optional<uint16_t> mss) {
     link_.send_segment(
         Tcp{local_port_, peer_port_, seq, (flags & kTcpAck) ? rcv_nxt_ : 0, flags, RECEIVE_WINDOW, mss, data});
@@ -39,11 +51,38 @@ void TcpFlow::send(uint8_t flags, uint32_t seq, std::span<const uint8_t> data, s
 
 void TcpFlow::send_syn() { send(kTcpSyn, iss_, {}, OUR_MSS); }
 
+void TcpFlow::send_syn_ack() { send(kTcpSyn | kTcpAck, iss_, {}, OUR_MSS); }
+
 void TcpFlow::receive(const Tcp &seg) {
     if (state_ == State::SynSent)
         on_syn_sent(seg);
+    else if (state_ == State::SynReceived)
+        on_syn_received(seg);
     else if (state_ == State::Open)
         on_open(seg);
+}
+
+void TcpFlow::on_syn_received(const Tcp &seg) {
+    if (seg.flags & kTcpRst) {
+        end(true);
+        return;
+    }
+    // The peer did not hear our SYN|ACK.
+    if (seg.flags & kTcpSyn) {
+        send_syn_ack();
+        return;
+    }
+    if (!(seg.flags & kTcpAck)) return;
+    if (seg.ack != iss_ + 1) {
+        send(kTcpRst, seg.ack);
+        return;
+    }
+    state_   = State::Open;
+    snd_una_ = snd_nxt_;
+    tries_   = 1;
+    deadline_.reset();
+    // The ACK may already carry data; bytes queued meanwhile go out now.
+    on_open(seg);
 }
 
 void TcpFlow::on_syn_sent(const Tcp &seg) {
@@ -156,7 +195,7 @@ void TcpFlow::close() {
 
 void TcpFlow::abort() {
     if (state_ == State::Ended) return;
-    if (state_ == State::Open) send(kTcpRst | kTcpAck, snd_nxt_);
+    if (state_ == State::Open || state_ == State::SynReceived) send(kTcpRst | kTcpAck, snd_nxt_);
     on_closed_ = nullptr;
     end(false);
 }
@@ -205,6 +244,10 @@ void TcpFlow::on_timeout() {
     deadline_ = link_.now_ns() + (RTO_NS << std::min(tries_ - 1, 5u));
     if (state_ == State::SynSent) {
         send_syn();
+        return;
+    }
+    if (state_ == State::SynReceived) {
+        send_syn_ack();
         return;
     }
     // Go back to the oldest unacknowledged byte.

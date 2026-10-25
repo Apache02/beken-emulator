@@ -8,6 +8,7 @@
 #include <span>
 #include <vector>
 
+#include "net/guest_link.h"
 #include "net/packets.h"
 #include "net/tcp_flow.h"
 
@@ -19,19 +20,19 @@ namespace bk {
 // side. Time is passed into every call; the stack has no clock of its own. The
 // TCP flows read the time of the latest call, so a `write` between two calls
 // is stamped with that call's time.
-class Stack {
+class Stack : public GuestLink {
   public:
     enum class Dhcp { None, Discovering, Requesting, Bound };
 
     using Mac        = packets::Mac;
     using Output     = std::function<void(std::vector<uint8_t>)>;
-    using UdpHandler = std::function<void(uint16_t src_port, std::span<const uint8_t> payload)>;
+    using UdpHandler = GuestLink::UdpHandler;
 
     static constexpr uint64_t DHCP_RETRY_NS = 3'000'000'000;
     static constexpr uint16_t FIRST_PORT    = 40000;
     static constexpr uint32_t TCP_ISS_STEP  = 100'000;
 
-    using TcpHandle = std::shared_ptr<TcpFlow>;
+    using TcpHandle = GuestLink::TcpHandle;
 
     Stack(Mac mac, Output output);
     Stack(const Stack &)            = delete;
@@ -47,11 +48,11 @@ class Stack {
     std::optional<uint64_t> next_event_ns() const;
 
     // The next free local port, increasing; 0 when every port is taken.
-    uint16_t allocate_port();
-    void     bind_udp(uint16_t port, UdpHandler handler);
-    void     unbind_udp(uint16_t port);
+    uint16_t allocate_port() override;
+    void     bind_udp(uint16_t port, UdpHandler handler) override;
+    void     unbind_udp(uint16_t port) override;
     // False while there is no address yet.
-    bool send_udp(uint16_t local_port, uint16_t guest_port, std::span<const uint8_t> data);
+    bool send_udp(uint16_t local_port, uint16_t guest_port, std::span<const uint8_t> data) override;
     // Connects from a fresh local port to `guest_port` and sends the SYN.
     // Null while there is no address or no port is left. Finished flows leave
     // the table on the next tick; the handle stays valid (and inert) after that.
@@ -59,7 +60,7 @@ class Stack {
                        TcpFlow::Deliver    deliver,
                        TcpFlow::PeerClosed on_peer_closed,
                        TcpFlow::Closed     on_closed,
-                       uint64_t            now_ns);
+                       uint64_t            now_ns) override;
 
     uint32_t   ip() const { return ip_; }
     uint32_t   guest_ip() const { return guest_ip_; }

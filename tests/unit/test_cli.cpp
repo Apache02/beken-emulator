@@ -55,6 +55,9 @@ TEST_CASE("usage text lists every option") {
                                "-p, --publish SPEC",
                                "[HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]",
                                "--ssid NAME",
+                               "--wifi-ap SSID",
+                               "--wifi-password PASS",
+                               "--wifi-channel N",
                                "--flash-mount [NAME=]FILE",
                                "-h, --help",
                                "BKEMU_PROFILES"})
@@ -193,6 +196,56 @@ TEST_CASE("cli ssid") {
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--ssid", ""}) == "--ssid needs a name of 1 to 32 bytes");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--ssid", std::string(33, 'x')}) ==
           "--ssid needs a name of 1 to 32 bytes");
+}
+
+TEST_CASE("cli wifi ap options") {
+    CliOptions none = parse({"BK7252", "--load", "ram:x.bin"});
+    CHECK_FALSE(none.wifi_ap);
+    CHECK_FALSE(none.wifi_password);
+    CHECK(none.wifi_channel == 1);
+
+    CliOptions o = parse({"BK7252",
+                          "--load",
+                          "ram:x.bin",
+                          "--wifi-ap",
+                          "TESTNET",
+                          "--wifi-password",
+                          "secret12",
+                          "--wifi-channel",
+                          "6"});
+    CHECK(o.wifi_ap == "TESTNET");
+    CHECK(o.wifi_password == "secret12");
+    CHECK(o.wifi_channel == 6);
+
+    CliOptions e = parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap=a=b", "--wifi-channel=13"});
+    CHECK(e.wifi_ap == "a=b");
+    CHECK_FALSE(e.wifi_password);
+    CHECK(e.wifi_channel == 13);
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", std::string(32, 'x')}).wifi_ap == std::string(32, 'x'));
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "--wifi-password", std::string(63, 'p')})
+              .wifi_password == std::string(63, 'p'));
+    // -p works in the AP role too.
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "-p", "8080:80"}).publish.size() == 1);
+}
+
+TEST_CASE("cli wifi ap errors") {
+    auto error = [](std::vector<std::string> extra) {
+        std::vector<std::string> args{"BK7252", "--load", "ram:x.bin"};
+        args.insert(args.end(), extra.begin(), extra.end());
+        return error_of(args);
+    };
+    CHECK(error({"--wifi-ap"}) == "--wifi-ap needs a value");
+    CHECK(error({"--wifi-ap", ""}) == "--wifi-ap needs an SSID of 1 to 32 bytes");
+    CHECK(error({"--wifi-ap", std::string(33, 'x')}) == "--wifi-ap needs an SSID of 1 to 32 bytes");
+    CHECK(error({"--wifi-ap", "n", "--wifi-password", "short12"}) == "--wifi-password needs 8 to 63 characters");
+    CHECK(error({"--wifi-ap", "n", "--wifi-password", std::string(64, 'p')}) ==
+          "--wifi-password needs 8 to 63 characters");
+    for (const char *bad : {"0", "14", "x", "", "6x", "-1", "99999999999"})
+        CHECK_MESSAGE(error({"--wifi-ap", "n", "--wifi-channel", bad}) == "--wifi-channel needs a channel 1-13", bad);
+    CHECK(error({"--wifi-password", "secret12"}) == "--wifi-password and --wifi-channel need --wifi-ap");
+    CHECK(error({"--wifi-channel", "6"}) == "--wifi-password and --wifi-channel need --wifi-ap");
+    CHECK(error({"--wifi-ap", "n", "--ssid", "cam"}) == "--wifi-ap and --ssid exclude each other");
+    CHECK(error({"--ssid", "cam", "--wifi-ap", "n"}) == "--wifi-ap and --ssid exclude each other");
 }
 
 TEST_CASE("cli i2c takes NAME=DEVICE, --i2c1 is a shorthand, order is kept") {
