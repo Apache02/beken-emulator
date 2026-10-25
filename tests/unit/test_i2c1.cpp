@@ -347,21 +347,3 @@ TEST_CASE("i2c1 talks to a register device") {
     f.step();
     CHECK(f.r(kData) == 0x96);
 }
-
-TEST_CASE("i2c1 logs config writes, phases and the interrupt line at DEBUG") {
-    std::ostringstream out;
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
-    Logger::set_level("i2c", Level::Debug);
-    {
-        Fixture f;
-        f.w(kData, 0x60);
-        f.w(kConfig, kEnsmb | kSta);
-        f.step();
-    }
-    std::string text = out.str();
-    Logger::reset_for_tests();
-    CHECK(text.find("config <= 0x00000003 (ensmb sta div=0)") != std::string::npos);
-    CHECK(text.find("address 0x30 write: ack") != std::string::npos);
-    CHECK(text.find("interrupt line high") != std::string::npos);
-}

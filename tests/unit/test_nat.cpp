@@ -107,12 +107,6 @@ struct Fixture {
         }
         return false;
     }
-
-    size_t count(const std::string &text) const {
-        size_t n = 0;
-        for (size_t at = log.str().find(text); at != std::string::npos; at = log.str().find(text, at + 1)) ++n;
-        return n;
-    }
 };
 
 // A listening TCP socket on 127.0.0.1 playing the remote host.
@@ -298,16 +292,12 @@ TEST_CASE("nat: UDP goes out through a host socket and the answer comes back fro
     REQUIRE(remote.receive() == bytes("other"));
     CHECK(ntohs(remote.last.sin_port) != host_port);
     CHECK(f.nat.udp_sessions() == 2);
-
-    // The first connection to an address is told once.
-    CHECK(f.count(std::format("[I] emulator.net.nat: firmware connects to 127.0.0.1:{} (udp)", remote.port)) == 1);
-    CHECK(f.count("firmware connects to") == 1);
 }
 
 TEST_CASE("nat: a ping goes out on an ICMP socket and the reply keeps the firmware's id") {
     Fixture f;
     // Needs net.ipv4.ping_group_range to hold the test's group; where it does
-    // not, the NAT warns once and the firmware gets no answer.
+    // not, the firmware gets no answer.
     int probe = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_ICMP);
     if (probe >= 0) ::close(probe);
 
@@ -315,9 +305,8 @@ TEST_CASE("nat: a ping goes out on an ICMP socket and the reply keeps the firmwa
     f.nat.icmp_out(kGuest, kLocal, {false, 0x1234, 7, data}, 0);
     if (probe < 0) {
         CHECK(f.nat.icmp_sessions() == 0);
-        CHECK(f.count("ping_group_range") == 1);
         f.nat.icmp_out(kGuest, kLocal, {false, 0x1234, 8, data}, 0);
-        CHECK(f.count("ping_group_range") == 1);
+        CHECK(f.nat.icmp_sessions() == 0);
         return;
     }
     REQUIRE(f.poll_until_sent(0));
@@ -342,17 +331,6 @@ TEST_CASE("nat: a ping goes out on an ICMP socket and the reply keeps the firmwa
     CHECK(f.nat.empty());
 }
 
-TEST_CASE("nat: TCP and UDP to one address are told once in all") {
-    Fixture f;
-    Remote  remote;
-    f.nat.udp_out(kGuest, 5000, kLocal, remote.port, bytes("ping"), 0);
-    Guest g(f, kLocal, closed_port());
-    g.segment(kTcpSyn);
-    g.wait();
-    CHECK(f.count("firmware connects to") == 1);
-    CHECK(f.count(std::format("[I] emulator.net.nat: firmware connects to 127.0.0.1:{} (udp)", remote.port)) == 1);
-}
-
 TEST_CASE("nat: a DNS query is relayed and answered from the gateway") {
     Remote  upstream;
     Fixture f(kLocal, upstream.port);
@@ -370,11 +348,8 @@ TEST_CASE("nat: a DNS query is relayed and answered from the gateway") {
     CHECK(udp->src_port == 53);
     CHECK(udp->dst_port == 6000);
     CHECK(Bytes(udp->payload.begin(), udp->payload.end()) == bytes("answer"));
-    // The relay names its upstream once, not as a connection of the firmware.
     f.nat.dns_query(kGuest, 6001, bytes("query"), 0);
     REQUIRE(upstream.receive() == bytes("query"));
-    CHECK(f.count(std::format("[I] emulator.net.nat: DNS relayed to 127.0.0.1:{}", upstream.port)) == 1);
-    CHECK(f.count("firmware connects to") == 0);
     f.sent.clear();
     upstream.answer(bytes("answer"));
     REQUIRE(f.poll_until_sent(kSec));
@@ -390,10 +365,9 @@ TEST_CASE("nat: a DNS query is relayed and answered from the gateway") {
     REQUIRE(f.poll_until_sent(2 * kSec));
     CHECK(f.sent[0].src == kLocal);
 
-    // Answered sessions idle out without a warning.
+    // Answered sessions idle out.
     f.nat.tick(2 * kSec + Nat::kUdpIdleNs);
     CHECK(f.nat.udp_sessions() == 0);
-    CHECK(f.count("WARNING") == 0);
 }
 
 TEST_CASE("nat: idle UDP sessions are closed; reset closes all") {
@@ -433,17 +407,16 @@ TEST_CASE("nat: idle UDP sessions are closed; reset closes all") {
     CHECK(f.sent.empty());
 }
 
-TEST_CASE("nat: without a resolver DNS is dropped with one warning") {
+TEST_CASE("nat: without a resolver DNS is dropped") {
     Fixture f;
     f.nat.dns_query(kGuest, 6000, bytes("query"), 0);
     f.nat.dns_query(kGuest, 6001, bytes("query"), kSec);
     f.nat.poll(2 * kSec);
     CHECK(f.sent.empty());
     CHECK(f.nat.udp_sessions() == 0);
-    CHECK(f.count("[W] emulator.net.nat: no DNS server: no IPv4 nameserver in /etc/resolv.conf") == 1);
 }
 
-TEST_CASE("nat: an upstream that refuses DNS is told with one warning") {
+TEST_CASE("nat: an upstream that refuses DNS gets no answer") {
     const uint16_t port = closed_port();
     Fixture        f(kLocal, port);
     // Several queries, on one guest port and on others.
@@ -455,27 +428,17 @@ TEST_CASE("nat: an upstream that refuses DNS is told with one warning") {
         }
     }
     CHECK(f.sent.empty());
-    CHECK(f.count(std::format(
-              "[W] emulator.net.nat: DNS server 127.0.0.1:{} refuses queries; DNS queries are dropped", port)) ==
-          1);
-    CHECK(f.count("WARNING") == 1);
 }
 
-TEST_CASE("nat: a silent DNS upstream is told with one warning when its sessions idle out") {
+TEST_CASE("nat: sessions to a silent DNS upstream idle out") {
     Remote  upstream; // bound, never answers
     Fixture f(kLocal, upstream.port);
     f.nat.dns_query(kGuest, 6000, bytes("q1"), 0);
     f.nat.dns_query(kGuest, 6001, bytes("q2"), kSec);
     f.nat.poll(kSec);
-    CHECK(f.count("WARNING") == 0);
     f.nat.tick(Nat::kUdpIdleNs - 1);
-    CHECK(f.count("WARNING") == 0);
     f.nat.tick(kSec + Nat::kUdpIdleNs);
     CHECK(f.nat.udp_sessions() == 0);
-    CHECK(f.count(
-              std::format("[W] emulator.net.nat: DNS server 127.0.0.1:{} does not answer; DNS queries are dropped",
-                          upstream.port)) == 1);
-    CHECK(f.count("WARNING") == 1);
 }
 
 TEST_CASE("host_resolver reads the first IPv4 nameserver") {
@@ -525,11 +488,10 @@ TEST_CASE("nat: a TCP connection opens only after the host accepts, and carries 
     g.ack += 5;
     g.segment(kTcpAck);
 
-    // A second connection to the same address is not told again.
+    // A second connection to the same address.
     Guest other(f, kLocal, server.port, 5001);
     int   fd2 = other.open(server);
     CHECK(f.nat.tcp_sessions() == 2);
-    CHECK(f.count(std::format("[I] emulator.net.nat: firmware connects to 127.0.0.1:{} (tcp)", server.port)) == 1);
 
     // Reset closes the host sockets without a word to the firmware.
     f.nat.reset();

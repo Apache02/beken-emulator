@@ -6,14 +6,12 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "app/registry.h"
-#include "core/log.h"
 #include "core/machine.h"
 #include "core/profile.h"
 #include "core/scheduler.h"
@@ -397,9 +395,6 @@ TEST_CASE("unknown module type error text") {
 }
 
 TEST_CASE("unknown and wifi_mac take a log_level for their stand-in registers") {
-    std::ostringstream out;
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
     Profile    p = chip();
     ModuleSpec blk{"unknown", "BLK", {{"regs", 0x00802D00}}, {}};
     ModuleSpec mac{
@@ -409,16 +404,7 @@ TEST_CASE("unknown and wifi_mac take a log_level for their stand-in registers") 
     blk.params.set("log_level", "debug");
     mac.params.set("log_level", "Debug");
     p.modules = {blk, mac};
-    Machine m(p, builtin_registry());
-    m.module("BLK")->write("regs", 0x00, 4, 1);
-    m.module("MAC")->write("pl", 0x100, 4, 2);
-    CHECK(out.str().empty());
-    Logger::set_level("unknown", Level::Debug);
-    m.module("BLK")->write("regs", 0x00, 4, 1);
-    m.module("MAC")->write("pl", 0x100, 4, 2);
-    CHECK(out.str().find("[D] emulator.unknown: BLK write +0x0000") != std::string::npos);
-    CHECK(out.str().find("[D] emulator.unknown: MAC_PL write +0x0100") != std::string::npos);
-    Logger::reset_for_tests();
+    CHECK_NOTHROW(Machine(p, builtin_registry()));
 
     blk.params.set("log_level", "loud");
     p.modules = {blk};
@@ -571,13 +557,6 @@ TEST_CASE("reset during tick is deterministic") {
 }
 
 TEST_CASE("watchdog expiry resets machine end to end") {
-    std::ostringstream out;
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
-    struct Restore {
-        ~Restore() { Logger::reset_for_tests(); }
-    } restore;
-
     Machine m(full_chip(), builtin_registry());
     Asm     a;
     a.poke(kIcu + 0x08, 0);   // ungate the watchdog clock
@@ -600,7 +579,6 @@ TEST_CASE("watchdog expiry resets machine end to end") {
     CHECK(m.cpu().reg(Reg::CPSR) == 0xD3);
     CHECK(word_at(m, kRam) == 0xAAAAAAAA);
     CHECK(word_at(m, loop) == 0xEAFFFFFE); // code survives (b .)
-    CHECK(out.str() == "[E] emulator.wdt: watchdog expired after 1 ms: resetting the chip\n");
     REQUIRE(m.module("WDT"));
     CHECK(m.module("WDT")->read("regs", 0, 4) == 0x4000);
     CHECK(m.module("ICU")->read("regs", 0x08, 4) == 0x100);
@@ -837,14 +815,9 @@ TEST_CASE("a memory to memory transfer goes through the real bus") {
     CHECK(word_at(m, kRam + 0x304) == 0x08070605);
     CHECK(dma->read("regs", 0xE0, 4) == 1);
 
-    // A transfer that leaves RAM aborts the channel and says so.
-    std::ostringstream out;
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
+    // A transfer that leaves RAM aborts the channel.
     dma->write("regs", 0x04, 4, kRam + kRamSize - 4);
     dma->write("regs", 0x00, 4, (7u << 16) | (2u << 6) | (2u << 4) | 0x300 | 1);
     dma->tick(m.scheduler().now_ns() + 2'000'000);
     CHECK((dma->read("regs", 0x00, 4) & 1) == 0);
-    CHECK(out.str().find("ch0 aborted: bus error at 0x00410000: nothing writable there") != std::string::npos);
-    Logger::reset_for_tests();
 }

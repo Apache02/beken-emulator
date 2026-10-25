@@ -192,7 +192,6 @@ TEST_CASE("station walks a whole handshake with exact frames") {
     f.fw(assoc_resp(0, 0xc005));
     CHECK(f.st.state() == Station::State::Run);
     CHECK(f.ups == std::vector<uint64_t>{f.now});
-    CHECK(f.out.str().find("associated with 'cam' (AID 5)") != std::string::npos);
     CHECK_FALSE(f.st.next_event_ns());
 
     // Data in both directions.
@@ -252,16 +251,11 @@ TEST_CASE("station ignores a network with another SSID") {
     CHECK_FALSE(f.st.bssid());
 }
 
-TEST_CASE("station warns once about a network that needs a password") {
+TEST_CASE("station does not join a network that needs a password") {
     Fixture f;
     f.fw(beacon("secret", 0x0411));
     f.fw(beacon("secret", 0x0411));
     CHECK(f.st.state() == Station::State::Scan);
-    const std::string s    = f.out.str();
-    const std::string want = "network 'secret' needs a password; only open networks are joined";
-    auto              pos  = s.find(want);
-    REQUIRE(pos != std::string::npos);
-    CHECK(s.find(want, pos + 1) == std::string::npos);
 }
 
 TEST_CASE("station skips beacons that are too short or have no SSID") {

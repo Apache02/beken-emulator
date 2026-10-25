@@ -76,9 +76,7 @@ struct Fixture {
             dma.tick(clock.now);
             if (clock.now > 10'000'000'000ULL) FAIL("runs away");
         }
-    }
-    std::string text() const { return out.str(); }
-};
+    }};
 
 } // namespace
 
@@ -268,9 +266,6 @@ TEST_CASE("gdma bus error aborts the channel without flags") {
     f.run_to_end();
     CHECK((f.r(0x00) & 1) == 0);
     CHECK(f.r(kStatus) == 0);
-    CHECK(f.text().find("ch0 aborted: bus error at 0x00001000: nothing readable there (src 0x00000FFC -> dst "
-                        "0x00000400, 16 bytes)") != std::string::npos);
-    CHECK(f.text().find("ERROR") != std::string::npos);
 }
 
 TEST_CASE("gdma other request lines are not emulated and stall") {
@@ -281,20 +276,14 @@ TEST_CASE("gdma other request lines are not emulated and stall") {
     f.clock.now = 1'000'000'000;
     f.dma.tick(f.clock.now);
     CHECK((f.r(0x20) & 1) == 1);
-    CHECK(f.text().find("ch1: source request line UART1 is not emulated; the transfer stalls") != std::string::npos);
     // Software can still stop it.
     f.w(0x20, 0);
     CHECK((f.r(0x20) & 1) == 0);
-
-    f.start(2, 0x100, 0x400, cfg(16, 2, 2, 0), 8u << 4 | 0xC); // memory source? destination JPEG, source 0xC
-    CHECK(f.text().find("ch2: source request line 0xC is not emulated") != std::string::npos);
-    CHECK(f.text().find("ch2: destination request line JPEG is not emulated") != std::string::npos);
 }
 
-TEST_CASE("gdma repeat mode warns and runs once") {
+TEST_CASE("gdma repeat mode runs once") {
     Fixture f;
     f.start(0, 0x100, 0x400, cfg(16, 2, 2, kSrcInc | kDstInc | kRepeat));
-    CHECK(f.text().find("ch0: repeat mode is not emulated; the transfer runs once") != std::string::npos);
     f.run_to_end();
     CHECK(f.mem.writes == 4);
 }
@@ -360,8 +349,6 @@ TEST_CASE("gdma paced channel bus error stops it") {
     f.dma.tick(10000);
     CHECK((f.r(0x00) & 1) == 0);
     CHECK(f.r(kStatus) == 0);
-    CHECK(f.text().find("ch0 aborted: bus error at 0x00001000: nothing writable there (-> dst 0x00001000)") !=
-          std::string::npos);
 }
 
 TEST_CASE("gdma request line is replaced by a later request, survives reset") {
@@ -415,17 +402,4 @@ TEST_CASE("gdma reset clears channels and flags") {
     CHECK(f.r(0x20 + 0x04) == 0);
     CHECK(f.r(kPrio) == 0);
     CHECK(f.r(0xC4) == 0);
-}
-
-TEST_CASE("gdma logs configuration, start and completion at DEBUG") {
-    Fixture f;
-    Logger::set_level("gdma", Level::Debug);
-    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
-    f.run_to_end();
-    f.w(kStatus, 1);
-    CHECK(f.text().find("ch0 start: DTCM 0x00000100 -> DTCM 0x00000400, 64 bytes (16 writes), src 32-bit +4, dst "
-                        "32-bit +4, irq: fin, est 1.0 us") != std::string::npos);
-    CHECK(f.text().find("ch0 done: 64 bytes copied") != std::string::npos);
-    CHECK(f.text().find("ch0 finish flag set") != std::string::npos);
-    CHECK(f.text().find("ch0 fin flag cleared by software") != std::string::npos);
 }

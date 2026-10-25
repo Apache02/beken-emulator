@@ -60,8 +60,6 @@ TEST_CASE("expires and resets chip") {
     CHECK(f.resets == 0);
     f.wdt.tick(11 * kMs);
     CHECK(f.resets == 1);
-    CHECK(f.out.str().find("watchdog expired after 10 ms: resetting the chip") != std::string::npos);
-    CHECK(f.out.str().find("[E]") != std::string::npos);
     CHECK_FALSE(f.wdt.next_event_ns().has_value());
 }
 

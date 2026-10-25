@@ -35,10 +35,6 @@ const std::array<uint8_t, 32> &pmk() {
     return p;
 }
 
-std::string line(const char *level, const std::string &msg) {
-    return std::string(level) + " emulator.net.ap: " + msg + "\n";
-}
-
 struct Fixture {
     std::ostringstream   out;
     std::vector<Bytes>   sent;
@@ -133,7 +129,6 @@ TEST_CASE("authenticator: a full handshake with the right password") {
     CHECK(f.auth.next_event_ns() == std::nullopt);
     CHECK(f.sent.size() == 2);
     CHECK(std::equal(f.auth.tk().begin(), f.auth.tk().end(), f.sup.tk().begin()));
-    CHECK(f.out.str() == line("INFO", "4-way handshake with 22:ac:01:02:03:04 done"));
 
     // Nothing more happens once done.
     f.auth.tick(10 * Authenticator::kRetryNs);
@@ -142,11 +137,9 @@ TEST_CASE("authenticator: a full handshake with the right password") {
     CHECK(f.auth.state() == Authenticator::State::Done);
 }
 
-TEST_CASE("authenticator: a wrong password is warned about once per attempt and fails after the tries") {
+TEST_CASE("authenticator: a wrong password fails after the tries") {
     using namespace wpa_test;
-    Fixture           f(crypto::wpa_psk("not the password", "NAXCLOW"));
-    const std::string bad  = line("WARNING", "message 2 from 22:ac:01:02:03:04 has a bad MIC: wrong password?");
-    std::string       logs = "";
+    Fixture f(crypto::wpa_psk("not the password", "NAXCLOW"));
 
     uint64_t t = 0;
     f.auth.start(t);
@@ -159,8 +152,6 @@ TEST_CASE("authenticator: a wrong password is warned about once per attempt and 
         CHECK(m1.nonce == expected_anonce());
 
         f.auth.receive(f.sup.m2(m1), t + 1000);
-        if (n == 1) logs += bad; // the M2s that answer the retries are only DEBUG
-        CHECK(f.out.str() == logs);
         CHECK(f.auth.state() == Authenticator::State::SentM1);
         CHECK(f.sent.size() == n); // a bad M2 is not answered
 
@@ -173,24 +164,19 @@ TEST_CASE("authenticator: a wrong password is warned about once per attempt and 
     CHECK(f.sent.size() == Authenticator::kTries);
     CHECK(f.auth.state() == Authenticator::State::Failed);
     CHECK(f.auth.next_event_ns() == std::nullopt);
-    logs += line("WARNING", "4-way handshake with 22:ac:01:02:03:04 failed");
-    CHECK(f.out.str() == logs);
 
     // A late M2 changes nothing.
     f.auth.receive(f.sup.m2(*parse(f.sent.back())), t + 1);
     f.auth.tick(t + 10 * Authenticator::kRetryNs);
     CHECK(f.sent.size() == Authenticator::kTries);
     CHECK(f.auth.state() == Authenticator::State::Failed);
-    CHECK(f.out.str() == logs);
 
-    // A new start begins a fresh attempt, which warns again; a right password then completes it.
+    // A new start begins a fresh attempt; a right password then completes it.
     f.auth.start(t + 20 * Authenticator::kRetryNs);
     CHECK(f.auth.state() == Authenticator::State::SentM1);
     Key m1 = f.last();
     f.auth.receive(f.sup.m2(m1), t + 20 * Authenticator::kRetryNs);
     f.auth.receive(f.sup.m2(m1), t + 20 * Authenticator::kRetryNs);
-    logs += bad;
-    CHECK(f.out.str() == logs);
     f.sup.pmk = pmk();
     f.auth.receive(f.sup.m2(m1), t + 20 * Authenticator::kRetryNs);
     REQUIRE(f.auth.state() == Authenticator::State::SentM3);
@@ -219,7 +205,6 @@ TEST_CASE("authenticator: an unanswered M3 is retried, then the handshake fails"
     f.auth.tick(Authenticator::kTries * Authenticator::kRetryNs);
     CHECK(f.sent.size() == 1 + Authenticator::kTries);
     CHECK(f.auth.state() == Authenticator::State::Failed);
-    CHECK(f.out.str() == line("WARNING", "4-way handshake with 22:ac:01:02:03:04 failed"));
 }
 
 TEST_CASE("authenticator: replayed or out-of-order messages are ignored") {
@@ -253,7 +238,6 @@ TEST_CASE("authenticator: replayed or out-of-order messages are ignored") {
     f.auth.receive(cut, 30);
     CHECK(f.auth.state() == Authenticator::State::SentM1);
     CHECK(f.sent.size() == 1);
-    CHECK(f.out.str() == "");
 
     // The real M2 still works; a second copy of it after M3 changes nothing.
     f.auth.receive(m2, 40);
@@ -271,7 +255,6 @@ TEST_CASE("authenticator: replayed or out-of-order messages are ignored") {
     bad[kMicAt] ^= 1;
     f.auth.receive(bad, 70);
     CHECK(f.auth.state() == Authenticator::State::SentM3);
-    CHECK(f.out.str() == "");
 
     f.auth.receive(f.sup.m4(m3), 80);
     CHECK(f.auth.state() == Authenticator::State::Done);

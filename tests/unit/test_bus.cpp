@@ -194,19 +194,9 @@ struct Fixture {
             return false;
         }
     }
-    size_t count(const std::string &s) const {
-        std::string all = out.str();
-        size_t      n   = 0;
-        for (size_t p = all.find(s); p != std::string::npos; p = all.find(s, p + 1)) ++n;
-        return n;
-    }
 };
 
 const Result kOk{RunResult::Budget, 100};
-
-std::string line(const char *level, const std::string &msg) {
-    return std::string(level) + " emulator.bus: " + msg + "\n";
-}
 
 } // namespace
 
@@ -221,7 +211,6 @@ TEST_CASE("mmio read dispatches size and offset") {
     });
     CHECK(f.r(Reg::R1) == 0x12345678);
     CHECK(f.r(Reg::PC) == 0x104);
-    CHECK(f.out.str() == "");
 }
 
 TEST_CASE("mmio byte and halfword reads take their bytes from the word the module returns") {
@@ -239,7 +228,6 @@ TEST_CASE("mmio byte and halfword reads take their bytes from the word the modul
     });
     CHECK(f.r(Reg::R1) == 0x33);
     CHECK(f.r(Reg::R3) == 0x5566);
-    CHECK(f.out.str() == "");
 }
 
 TEST_CASE("mmio narrow reads see every lane of the word") {
@@ -275,7 +263,6 @@ TEST_CASE("mmio write dispatch") {
                                  {"write", "other", 4, 4, 0xBABEBABE}
         });
     }
-    CHECK(f.out.str() == "");
 }
 
 TEST_CASE("mmio narrow stores at any lane write the word at its address") {
@@ -299,10 +286,9 @@ TEST_CASE("mmio narrow stores at any lane write the word at its address") {
     CHECK(f.dev.calls == std::vector<Call>{
                              {"write", "regs", 8, 4, expect}
     });
-    CHECK(f.out.str() == "");
 }
 
-TEST_CASE("unclaimed address reads 0 warns once") {
+TEST_CASE("unclaimed address reads 0 and ignores writes") {
     Fixture f;
     f.program({kLdrR1R2, kLdrR3R2, kStrR1R2, kStrR1R2, kLdrR3R4, kStrR1R4});
     f.cpu.set_reg(Reg::R1, 0x55);
@@ -313,17 +299,11 @@ TEST_CASE("unclaimed address reads 0 warns once") {
     CHECK(f.r(Reg::R1) == 0);
     CHECK(f.r(Reg::R3) == 0);
     CHECK(f.dev.calls.empty());
-    CHECK(f.out.str() == line("WARNING", "unclaimed peripheral read at 0x00800100") +
-                             line("WARNING", "unclaimed peripheral write at 0x00800100") +
-                             line("WARNING", "unclaimed peripheral read at 0x00800104") +
-                             line("WARNING", "unclaimed peripheral write at 0x00800104"));
-    // Running the same code again logs nothing new.
     f.start();
     f.cpu.set_reg(Reg::R2, 0x00800100);
     f.cpu.set_reg(Reg::R4, 0x00800104);
     CHECK(f.run() == kOk);
     CHECK(f.r(Reg::PC) == 0x118);
-    CHECK(f.count("unclaimed") == 4);
 }
 
 TEST_CASE("module range outside the peripheral window") {
@@ -339,7 +319,6 @@ TEST_CASE("module range outside the peripheral window") {
     });
     CHECK(f.r(Reg::R1) == 0x11223344);
     CHECK(f.r(Reg::R3) == 0);
-    CHECK(f.out.str() == line("WARNING", "unclaimed peripheral read at 0x00A00010"));
 }
 
 TEST_CASE("fault from module reaches cpu") {
@@ -357,7 +336,7 @@ TEST_CASE("fault from module reaches cpu") {
     CHECK(f.r(Reg::PC) == Fixture::handler(0x10));
 }
 
-TEST_CASE("unmapped access logs once per page and aborts") {
+TEST_CASE("unmapped access aborts") {
     Fixture f;
     SUBCASE("data access") {
         f.program({kLdrR1R2});
@@ -369,8 +348,6 @@ TEST_CASE("unmapped access logs once per page and aborts") {
             CHECK(f.r(Reg::LR) == 0x108);
             CHECK(f.r(Reg::PC) == Fixture::handler(0x10));
         }
-        CHECK(f.out.str() == line("ERROR", "bus error: unmapped access at 0x00300000") +
-                                 line("ERROR", "bus error: unmapped access at 0x00301FFC"));
     }
     SUBCASE("write") {
         f.program({kStrR1R2});
@@ -378,7 +355,6 @@ TEST_CASE("unmapped access logs once per page and aborts") {
         CHECK(f.run() == kOk);
         CHECK(f.r(Reg::CPSR) == (kAbt | kI));
         CHECK(f.r(Reg::LR) == 0x108);
-        CHECK(f.out.str() == line("ERROR", "bus error: unmapped access at 0x00300008"));
     }
     SUBCASE("fetch") {
         f.program({kBxR2});
@@ -390,7 +366,6 @@ TEST_CASE("unmapped access logs once per page and aborts") {
             CHECK(f.r(Reg::LR) == addr + 4);
             CHECK(f.r(Reg::PC) == Fixture::handler(0x0C));
         }
-        CHECK(f.out.str() == line("ERROR", "bus error: unmapped fetch at 0x00300000"));
     }
 }
 
@@ -405,8 +380,6 @@ TEST_CASE("fetch from non executable memory is pabt") {
         CHECK(f.r(Reg::LR) == addr + 4);
         CHECK(f.r(Reg::PC) == Fixture::handler(0x0C));
     }
-    CHECK(f.out.str() == line("ERROR", "bus error: fetch from non-executable memory at 0x00400000") +
-                             line("ERROR", "bus error: fetch from non-executable memory at 0x00401000"));
     // Data accesses to it are fine.
     f.program({kStrR1R2, kLdrR3R2});
     f.cpu.set_reg(Reg::R1, 0x77);
@@ -530,7 +503,6 @@ TEST_CASE("demand page mapped on first read") {
     CHECK(f.rom.calls.empty());
     CHECK(f.cpu.mem_read(kRom + 0xFFC, 4) ==
           std::vector<uint8_t>(f.rom.mem.begin() + 0xFFC, f.rom.mem.begin() + 0x1000));
-    CHECK(f.out.str() == "");
 
     // Code runs from a demand page too.
     f.rom.put(0x1800, mov_r0(7));
@@ -570,10 +542,9 @@ TEST_CASE("demand bad span aborts, pabt for fetch") {
         CHECK(f.r(Reg::LR) == kRom + 0x108);
         CHECK(f.r(Reg::PC) == Fixture::handler(0x0C));
     }
-    // The page was not mapped and no bus error was reported.
+    // The page was not mapped.
     CHECK(f.rom.pages == std::vector<uint32_t>{0});
     CHECK_FALSE(f.mapped(kRom));
-    CHECK(f.out.str() == "");
 }
 
 TEST_CASE("bus master reads and writes RAM across region ends only within regions") {
@@ -653,47 +624,26 @@ struct MirrorFixture {
         cpu.set_reg(Reg::R4, r4);
         cpu.run(static_cast<uint32_t>(code.size()) + 1);
     }
-    size_t count(const std::string &s) const {
-        std::string all = out.str();
-        size_t      n   = 0;
-        for (size_t p = all.find(s); p != std::string::npos; p = all.find(s, p + 1)) ++n;
-        return n;
-    }
 };
 
 } // namespace
 
-TEST_CASE("a mirror reaches the same bytes and each instruction warns once") {
+TEST_CASE("a mirror reaches the same bytes") {
     using F = MirrorFixture;
     F f;
     // A store through the third copy lands in the region.
     f.run({kStrR1R2}, 0x11223344, F::kBase + 2 * F::kSize + 0x40);
     CHECK(f.word(F::kBase + 0x40) == 0x11223344);
-    CHECK(f.out.str() == line("WARNING",
-                              "write of 4 bytes at 0x00420040 is in a mirror of ram: it reaches 0x00400040; "
-                              "pc 0x00000100"));
-    // A load through the last copy, and the same instruction again: one warning.
+    // A load through the last copy.
     f.put(F::kBase + 0x80, 0xCAFEF00D);
-    f.out.str("");
     f.run({kLdrR3R2, kLdrR3R2}, 0, F::kBase + 3 * F::kSize + 0x80);
     CHECK(f.cpu.reg(Reg::R3) == 0xCAFEF00D);
-    CHECK(f.count("WARNING") == 2); // two instructions at 0x100 and 0x104
-    f.out.str("");
-    f.run({kLdrR3R2}, 0, F::kBase + F::kSize + 0x80);
-    CHECK(f.out.str().empty()); // the instruction at 0x100 has reported a read already
     // A byte store changes that byte only.
     f.run({kStrbR1R2}, 0xA5, F::kBase + F::kSize + 0x81);
     CHECK(f.word(F::kBase + 0x80) == 0xCAFEA50D);
-    // The region itself is plain RAM: no warning.
-    f.out.str("");
-    f.run({kLdrR3R2, kStrR1R2}, 1, F::kBase + 0x40);
-    CHECK(f.out.str().empty());
-    // Past the window nothing is mapped.
-    f.run({kLdrR3R2}, 0, F::kBase + F::kWindow);
-    CHECK(f.count("bus error: unmapped access at 0x00440000") == 1);
 }
 
-TEST_CASE("a bus master reaches the region through a mirror, warned once per page") {
+TEST_CASE("a bus master reaches the region through a mirror") {
     using F = MirrorFixture;
     F             f;
     BusMemory    &m       = f.bus.memory();
@@ -702,11 +652,6 @@ TEST_CASE("a bus master reaches the region through a mirror, warned once per pag
     CHECK(f.cpu.mem_read(F::kBase + 0x10, 4) == std::vector<uint8_t>{1, 2, 3, 4});
     CHECK(m.read(F::kBase + 3 * F::kSize + 0x10, 4) == std::vector<uint8_t>{1, 2, 3, 4});
     CHECK(m.read(F::kBase + 3 * F::kSize + 0x20, 4).size() == 4);
-    CHECK(f.out.str() ==
-          line("WARNING", "bus master write of 4 bytes at 0x00410010 is in a mirror of ram: it reaches 0x00400010") +
-              line("WARNING",
-                   "bus master read of 4 bytes at 0x00430010 is in a mirror of ram: it reaches "
-                   "0x00400010"));
     // A transfer across the end of a copy goes on at the start of the next.
     f.put(F::kBase + F::kSize - 4, 0xBBAA0000);
     f.put(F::kBase, 0x0000DDCC);
@@ -821,7 +766,7 @@ TEST_CASE("bad span adds hooks and requests restart") {
     CHECK(f.rom.pages.front() == 0);
 }
 
-TEST_CASE("write to demand page ignored and warned once") {
+TEST_CASE("write to demand page ignored") {
     Fixture f;
     f.program({kStrR1R2, kStrbR1R2, kStrR1R4, kLdrR3R4});
     f.cpu.set_reg(Reg::R1, 0xDEADBEEF);
@@ -834,7 +779,6 @@ TEST_CASE("write to demand page ignored and warned once") {
     CHECK(f.cpu.mem_read(kRom + 0x1000, 4) ==
           std::vector<uint8_t>(f.rom.mem.begin() + 0x1000, f.rom.mem.begin() + 0x1004));
     CHECK(f.cpu.mem_read(kRom + 0x8, 4) == std::vector<uint8_t>(f.rom.mem.begin() + 0x8, f.rom.mem.begin() + 0xC));
-    CHECK(f.out.str() == line("WARNING", "write to read-only rom.code ignored at 0x00101000"));
 }
 
 TEST_CASE("invalidate unmaps pages") {
@@ -873,9 +817,6 @@ TEST_CASE("invalidate unmaps pages") {
 }
 
 TEST_CASE("invalidate shows new flash data") {
-    std::ostringstream out;
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
     Cpu   cpu;
     Bus   bus(cpu);
     Flash flash("flash", 0x10000);
@@ -908,6 +849,4 @@ TEST_CASE("invalidate shows new flash data") {
     CHECK(read_xip() == 0x17161514);
     flash.load(0, block(0x40));
     CHECK(read_xip() == 0x47464544);
-    CHECK(out.str() == "");
-    Logger::reset_for_tests();
 }

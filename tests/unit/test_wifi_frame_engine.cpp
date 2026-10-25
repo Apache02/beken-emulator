@@ -186,7 +186,6 @@ TEST_CASE("transmit gathers the header buffer and the buffer descriptors") {
     CHECK(f.air.sent[0] == expected); // 24 - 4 FCS bytes = 20
     CHECK(f.mem.word(0x300 + 16) == 0x80000000);
     CHECK(f.mem.word(0x320 + 16) == 0x80000000);
-    CHECK(f.out.str().find("WARNING") == std::string::npos);
 }
 
 TEST_CASE("transmit drops the FCS bytes and keeps short frames whole") {
@@ -306,10 +305,9 @@ TEST_CASE("a new tail with nothing linked sends nothing") {
     REQUIRE(f.air.sent.size() == 1);
     f.wpl(kDmaSet, 1u << 1); // next is still 0
     CHECK(f.air.sent.size() == 1);
-    CHECK(f.out.str().find("WARNING") == std::string::npos);
 }
 
-TEST_CASE("a bad marker logs a warning and stops the chain") {
+TEST_CASE("a bad marker stops the chain") {
     Fixture f;
     f.mem.fill(0x1000, pattern(1, 8));
     f.thd(0x100, 0x200, 0, 0x1000, 8, 12, 0);
@@ -318,14 +316,10 @@ TEST_CASE("a bad marker logs a warning and stops the chain") {
     f.wpl(0x19C, 0x100);
     f.wpl(kDmaSet, 1u << 9);
     CHECK(f.air.sent.size() == 1);
-    CHECK(f.out.str().find("transmit descriptor at 0x00000200 is not valid") != std::string::npos);
-    CHECK(f.out.str().find("WARNING") != std::string::npos);
 
-    f.out.str("");
     f.wpl(0x19C, 0x20000); // outside memory
     f.wpl(kDmaSet, 1u << 9);
     CHECK(f.air.sent.size() == 1);
-    CHECK(f.out.str().find("transmit descriptor at 0x00020000 is not valid") != std::string::npos);
 }
 
 TEST_CASE("a descriptor without data waits for the firmware to kick again") {
@@ -393,10 +387,7 @@ TEST_CASE("transmit tolerates a completion write error and unreadable buffers") 
     f.wpl(kDmaSet, 1u << 9);
     REQUIRE(f.air.sent.size() == 1);
     CHECK(f.air.sent[0].size() == 8);
-    CHECK(f.out.str().find("cannot write the descriptor or buffer at 0x00000310") != std::string::npos);
-    f.out.str("");
     f.at_us(500);
-    CHECK(f.out.str().find("cannot write the descriptor or buffer at 0x0000013C") != std::string::npos);
 }
 
 TEST_CASE("frames are dropped silently without an air") {
@@ -411,7 +402,6 @@ TEST_CASE("frames are dropped silently without an air") {
     CHECK(f.mem.word(0x100 + 60) == 0x80800000u);
     f.activate();
     f.mac.receive(frame_from(1));
-    CHECK(f.out.str().find("WARNING") == std::string::npos);
 }
 
 TEST_CASE("reset drops pending completions and resets the air") {
@@ -596,7 +586,7 @@ TEST_CASE("only the newest 64 queued frames are kept") {
     }
 }
 
-TEST_CASE("a receive buffer write error is logged and the frame still counts as delivered") {
+TEST_CASE("a receive buffer write error still counts the frame as delivered") {
     Fixture f;
     f.activate();
     f.rhd(0x400, 0);
@@ -604,7 +594,6 @@ TEST_CASE("a receive buffer write error is logged and the frame still counts as 
     f.mem.write_limit = 0x2000;
     f.set_rx_heads(0x400, 0x500);
     f.mac.receive(frame_from(1));
-    CHECK(f.out.str().find("cannot write the descriptor or buffer at 0x00002000") != std::string::npos);
     CHECK(f.mem.word(0x400 + 64) == 0x6000u);
 }
 

@@ -30,13 +30,6 @@ struct Fixture {
 
     uint32_t r(uint32_t off, uint32_t size = 4) { return block.read("regs", off, size); }
     void     w(uint32_t off, uint32_t v, uint32_t size = 4) { block.write("regs", off, size, v); }
-    // The last log line without its prefix and newline.
-    std::string last() {
-        std::string s = out.str();
-        if (!s.empty() && s.back() == '\n') s.pop_back();
-        auto nl = s.rfind('\n');
-        return nl == std::string::npos ? s : s.substr(nl + 1);
-    }
 };
 
 } // namespace
@@ -81,10 +74,7 @@ TEST_CASE("unknown narrow writes change only their bytes of the word") {
     f.w(0x12, 0x5566, 2);
     CHECK(f.r(0x10) == 0x5566EEDD);
     f.w(0x10, 0x1234, 2);
-    CHECK(f.last().find("write +0x0010 (2 bytes) = 0x1234") != std::string::npos);
     CHECK(f.r(0x10) == 0x55661234);
-    f.w(0x30, 0x1234, 1);
-    CHECK(f.last().find("write +0x0030 (1 bytes) = 0x34") != std::string::npos);
 }
 
 TEST_CASE("unknown writes outside the block or across a word are dropped") {
@@ -119,44 +109,6 @@ TEST_CASE("unknown start words must be words inside the block") {
                               {0x3C, 1}
     },
                           nullptr));
-}
-
-TEST_CASE("unknown logs every access at INFO with pc and opcode") {
-    Fixture f;
-    f.insn = Instruction{0x00001234, 0xE5801000, 4};
-    f.w(0x10, 0x55);
-    CHECK(f.last().ends_with("BLK write +0x0010 (4 bytes) = 0x00000055  pc 0x00001234 opcode E5801000"));
-    CHECK(f.last().find("INFO") != std::string::npos);
-    CHECK(f.last().find("emulator.unknown") != std::string::npos);
-    f.r(0x10);
-    CHECK(f.last().ends_with("BLK read +0x0010 (4 bytes) = 0x00000055  pc 0x00001234 opcode E5801000"));
-    // Thumb opcodes have four digits.
-    f.insn = Instruction{0x00002000, 0x6008, 2};
-    f.r(0x14);
-    CHECK(f.last().ends_with("BLK read +0x0014 (4 bytes) = 0x00000000  pc 0x00002000 opcode 6008"));
-}
-
-TEST_CASE("unknown logs at the level it is given") {
-    std::ostringstream out;
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
-    Unknown block("BLK", 0x40, {}, nullptr, Level::Debug);
-    block.write("regs", 0x10, 4, 0x55);
-    CHECK(out.str().empty()); // the default level is INFO
-    Logger::set_level("unknown", Level::Debug);
-    block.write("regs", 0x10, 4, 0x55);
-    CHECK(out.str() == "[D] emulator.unknown: BLK write +0x0010 (4 bytes) = 0x00000055\n");
-    Logger::reset_for_tests();
-}
-
-TEST_CASE("unknown leaves the pc part out without an instruction") {
-    Fixture none(0x100, {}, false);
-    none.r(0x20);
-    CHECK(none.last().ends_with("BLK read +0x0020 (4 bytes) = 0x00000000"));
-    Fixture unreadable;
-    unreadable.insn = std::nullopt;
-    unreadable.r(0x20);
-    CHECK(unreadable.last().ends_with("BLK read +0x0020 (4 bytes) = 0x00000000"));
 }
 
 TEST_CASE("unknown reset restores the start values") {

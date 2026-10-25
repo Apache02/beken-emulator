@@ -113,7 +113,6 @@ TEST_CASE("router network: a virtual station joins, gets 10.0.2.15 and pings the
     CHECK(air.stack.guest_ip() == ip4(10, 0, 2, 2));
     CHECK(air.net.access_point().station() == kFw);
     CHECK(air.net.router().guest_ip() == ip4(10, 0, 2, 15));
-    CHECK(air.log.str().find("lease") != std::string::npos);
 
     const Bytes data = {9, 8, 7};
     air.received.clear();

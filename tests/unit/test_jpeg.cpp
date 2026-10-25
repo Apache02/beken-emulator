@@ -324,7 +324,7 @@ TEST_CASE("jpeg a picture shorter than a marker is refused") {
     CHECK_NOTHROW(Jpeg("JPEG", clock, {}, nullptr, 1000, 150, {0xFF, 0xD8}));
 }
 
-TEST_CASE("jpeg works without interrupt and DMA lines and logs at DEBUG") {
+TEST_CASE("jpeg works without interrupt and DMA lines") {
     FakeClock clock;
     Jpeg      jpeg("JPEG", clock, {}, nullptr, 10, 5, picture());
     jpeg.write("regs", kCtrl1, 4, kEncEn);

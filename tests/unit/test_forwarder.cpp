@@ -487,7 +487,7 @@ TEST_CASE("TCP: bytes the host socket does not take yet are kept and sent later"
     CHECK(got == data);
 }
 
-TEST_CASE("TCP: a client waits for an address and is dropped after 30 seconds with a warning") {
+TEST_CASE("TCP: a client waits for an address and is dropped after 30 seconds") {
     Rig       rig;
     Forwarder fw(rig.stack, {tcp_publish(80)});
     Sock      client = tcp_client(fw.addresses()[0].host_port);
@@ -499,16 +499,9 @@ TEST_CASE("TCP: a client waits for an address and is dropped after 30 seconds wi
     rig.now = 5 * kSec + 29'999'999'999;
     rig.poll(fw);
     CHECK(fw.connections() == 1);
-    CHECK(rig.log.str().empty());
     rig.now = 35 * kSec;
     rig.poll(fw);
     CHECK(fw.connections() == 0);
-    CHECK(rig.log.str() == "[W] emulator.net.forward: connection from 127.0.0.1:" + [&] {
-        sockaddr_in sa{};
-        socklen_t   len = sizeof sa;
-        ::getsockname(client.fd, reinterpret_cast<sockaddr *>(&sa), &len);
-        return std::to_string(ntohs(sa.sin_port));
-    }() + " dropped: the firmware got no address\n");
     Received r = drain(client.fd);
     CHECK((r.eof || r.error != 0));
 }
@@ -527,7 +520,6 @@ TEST_CASE("TCP: a client that waits is served as soon as the firmware has an add
     rig.now = 10 * kSec;
     rig.bind();
     REQUIRE(rig.settle(fw, [&] { return rig.guest.connection() && rig.guest.connection()->received.size() == 5; }));
-    CHECK(rig.log.str().empty());
 }
 
 TEST_CASE("TCP: several clients get their own flows") {

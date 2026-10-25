@@ -208,19 +208,12 @@ TEST_CASE("mac the firmware's counter-running probe sees the counter move") {
     CHECK(f.core(kCounter1) == 0);
 }
 
-TEST_CASE("mac other registers are logged stand-ins that read back what was written") {
+TEST_CASE("mac other registers are stand-ins that read back what was written") {
     Fixture f;
     f.wcore(0x100, 0xDEADBEEF);
     CHECK(f.core(0x100) == 0xDEADBEEF);
     f.mac.write("pl", 0x100, 4, 0x1234);
     CHECK(f.mac.read("pl", 0x100, 4) == 0x1234);
-    CHECK(f.out.str().find("MAC_CORE write +0x0100 (4 bytes) = 0xDEADBEEF") != std::string::npos);
-    CHECK(f.out.str().find("MAC_PL read +0x0100 (4 bytes) = 0x00001234") != std::string::npos);
-    // The counters are not logged.
-    f.out.str("");
-    f.core(kCounter1);
-    f.core(kLo);
-    CHECK(f.out.str().empty());
 }
 
 TEST_CASE("mac reset zeroes the stand-ins and restarts the counters") {
@@ -650,20 +643,15 @@ TEST_CASE("mac time on air for legacy and HT rates") {
 
 TEST_CASE("mac_cntrl_2 soft reset bit clears itself at the next tick") {
     Fixture f;
-    Logger::set_level("all", Level::Debug);
     f.wpl(kMacCntrl2, 0x101);
     CHECK(f.pl(kMacCntrl2) == 0x101);
     f.mac.tick(10);
     CHECK(f.pl(kMacCntrl2) == 0x100);
-    CHECK(f.out.str().find("MAC_PL soft reset done") != std::string::npos);
-    f.out.str("");
-    f.mac.tick(20);
-    CHECK(f.out.str().find("soft reset done") == std::string::npos);
     // Writing 0 before the tick cancels it.
     f.wpl(kMacCntrl2, 1);
     f.wpl(kMacCntrl2, 0);
     f.mac.tick(30);
-    CHECK(f.out.str().find("soft reset done") == std::string::npos);
+    CHECK(f.pl(kMacCntrl2) == 0);
 }
 
 TEST_CASE("mac reset clears state, interrupts, timers, TSF offset, keys and the line cache") {

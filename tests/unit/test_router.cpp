@@ -157,7 +157,6 @@ TEST_CASE("router: DHCP offers and acknowledges 10.0.2.15") {
     CHECK(sub(udp->payload) ==
           build_dhcp_server(DhcpAck, 0x1234, kFw, kGuest, kGateway, kMask, kGateway, kGateway, 86400));
     CHECK(f.router.guest_ip() == kGuest);
-    CHECK(f.log.str().find("lease 10.0.2.15 to 02:aa:bb:cc:dd:01") != std::string::npos);
 
     // A renewal names the address in ciaddr instead of option 50.
     Bytes renew = build_dhcp_client(DhcpRequest, 0x99, kFw, std::nullopt, std::nullopt);

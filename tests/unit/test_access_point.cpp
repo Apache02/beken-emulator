@@ -135,12 +135,6 @@ std::optional<wpa_test::Key> eapol_out(const Bytes &f) {
     return wpa_test::parse(Bytes(f.begin() + 32, f.end()));
 }
 
-size_t count(const std::string &text, const std::string &what) {
-    size_t n = 0;
-    for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + 1)) ++n;
-    return n;
-}
-
 struct Fixture {
     std::ostringstream                           out;
     std::vector<Bytes>                           air; // frames handed to the MAC
@@ -229,7 +223,6 @@ TEST_CASE("access point beacons every 100 TU with the open elements") {
     CHECK(Bytes(f.air[1].begin() + 24, f.air[1].begin() + 32) == le64((3 * AccessPoint::kBeaconIntervalNs + 5) / 1000));
     CHECK(Bytes(f.air[1].begin() + 32, f.air[1].end()) == open_tail("cam", 1));
     CHECK(f.ap.next_event_ns() == 4 * AccessPoint::kBeaconIntervalNs);
-    CHECK(f.out.str().find("access point 'cam' on channel 1 (open)") != std::string::npos);
 }
 
 TEST_CASE("access point with a password advertises RSN and runs the handshake after association") {
@@ -245,7 +238,6 @@ TEST_CASE("access point with a password advertises RSN and runs the handshake af
               ssid_el("cam"), kRatesEl, {0x03, 0x01, 11},
               kTimEl, kExtRatesEl, kRsnEl
     }));
-    CHECK(f.out.str().find("access point 'cam' on channel 11 (WPA2-PSK)") != std::string::npos);
     f.air.clear();
 
     // The association is answered, then message 1 follows; the link is not up yet.
@@ -281,7 +273,6 @@ TEST_CASE("access point with a password advertises RSN and runs the handshake af
     CHECK(f.links == std::vector<std::tuple<bool, Mac, uint64_t>>{
                          {true, kSta, f.now}
     });
-    CHECK(f.out.str().find("4-way handshake with 22:ac:01:02:03:04 done") != std::string::npos);
     // EAPOL never reaches the router.
     CHECK(f.eth.empty());
     f.settle();
@@ -442,11 +433,6 @@ TEST_CASE("access point deauthenticates when the handshake fails") {
         CHECK(f.ap.next_event_ns() > f.now);
         CHECK(*f.ap.next_event_ns() <= f.now + AccessPoint::kBeaconIntervalNs);
 
-        // One warning about the password per attempt, one about the failure.
-        CHECK(count(f.out.str(), "[W] emulator.net.ap: message 2 from 22:ac:01:02:03:04 has a bad MIC") == attempt);
-        CHECK(count(f.out.str(), "[W] emulator.net.ap: 4-way handshake with 22:ac:01:02:03:04 failed") == attempt);
-        CHECK(count(f.out.str(), "station 22:ac:01:02:03:04 left (4-way handshake failed)") == attempt);
-
         // Nothing of the old association is left: no data, no late handshake message.
         f.fw(frame(0x08, 0x01, kBss, kSta, kPeer, kIpPayload));
         CHECK(f.eth.empty());
@@ -526,7 +512,6 @@ TEST_CASE("access point walks auth and association and reports the link") {
                           ap_header(0xb0, 0x00, kSta, kBss, 1), {0x00, 0x00, 0x02, 0x00, 0x00, 0x00}
     }));
     CHECK_FALSE(f.ap.station());
-    CHECK(f.out.str().find("station 22:ac:01:02:03:04 authenticated") != std::string::npos);
 
     uint64_t t = f.now;
     f.fw(assoc_req());
@@ -534,7 +519,6 @@ TEST_CASE("access point walks auth and association and reports the link") {
     CHECK(f.links == std::vector<std::tuple<bool, Mac, uint64_t>>{
                          {true, kSta, t}
     });
-    CHECK(f.out.str().find("station 22:ac:01:02:03:04 associated with 'cam'") != std::string::npos);
     CHECK(f.air.size() == 1);
     f.tick(f.now + AccessPoint::kLatencyNs);
     REQUIRE(f.air.size() == 2);

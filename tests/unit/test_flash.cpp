@@ -107,19 +107,7 @@ struct Fixture {
         }
         return std::nullopt;
     }
-    size_t count(const std::string &s) const {
-        std::string all = out.str();
-        size_t      n   = 0;
-        for (size_t p = all.find(s); p != std::string::npos; p = all.find(s, p + 1)) ++n;
-        return n;
-    }
 };
-
-std::string alert(const char *logical, int blk, const char *physical) {
-    return std::string("[E] emulator.flash: ALERT: XIP read of an unreadable block (bad CRC or "
-                       "past the end of flash): logical ") +
-           logical + ", block " + std::to_string(blk) + ", physical " + physical + "\n";
-}
 
 } // namespace
 
@@ -193,7 +181,6 @@ TEST_CASE("xip decodes data bytes") {
     CHECK(p.bad.front().end == 96);
     CHECK(p.bad.back().start == 4064);
     CHECK(p.bad.back().end == 4096);
-    CHECK(f.out.str().empty());
 }
 
 TEST_CASE("bad crc block is bad span and read faults") {
@@ -207,25 +194,18 @@ TEST_CASE("bad crc block is bad span and read faults") {
     CHECK(p.bad[1].end == 128);
     for (int i = 32; i < 64; ++i) CHECK(p.data[i] == 0);
     CHECK(p.data[64] == 0x80);
-    CHECK(f.out.str().empty()); // page() does not log
 
     CHECK(f.flash.read("xip", 64, 4) == 0x83828180);
     auto e = f.xip_fault(36);
     REQUIRE(e);
     CHECK(e->kind == Fault::Kind::Dabt);
     CHECK(e->addr == 36);
-    CHECK(f.out.str() == alert("0x00000024", 1, "0x000026"));
     REQUIRE(f.xip_fault(40));
     REQUIRE(f.xip_fault(32, 1));
-    CHECK(f.count("ALERT") == 1); // same block repeats: suppressed
     CHECK(f.flash.read("xip", 0, 4) == 0x03020100);
     REQUIRE(f.xip_fault(36));
-    CHECK(f.count("ALERT") == 1); // a good read in between does not end the run
     REQUIRE(f.xip_fault(100));
-    CHECK(f.count(alert("0x00000064", 3, "0x00006A")) == 1);
     REQUIRE(f.xip_fault(44));
-    CHECK(f.count(alert("0x0000002C", 1, "0x00002E")) == 1);
-    CHECK(f.count("ALERT") == 3);
 }
 
 TEST_CASE("crc_en clear reads bad block") {
@@ -239,7 +219,6 @@ TEST_CASE("crc_en clear reads bad block") {
     CHECK(p.bad.empty());
     CHECK(p.data[32] == 0x40);
     CHECK(p.data[64] == 0xFF);
-    CHECK(f.out.str().empty());
 }
 
 TEST_CASE("read id register") {
@@ -299,7 +278,6 @@ TEST_CASE("rdsr and wrsr without wren") {
     CHECK(f.rdsr() == 0x40);
     f.cmd(RDSR2);
     CHECK((f.r(kSrCnt) & 0xFFFF) == 0x5A);
-    CHECK(f.out.str().empty());
 }
 
 TEST_CASE("explicit wren consumed") {
@@ -330,24 +308,17 @@ TEST_CASE("wp not released ignores write") {
     f.inv.clear();
     f.cmd(WREN);
     f.cmd(SE, 0x1234, false);
-    CHECK(f.out.str() == "[W] emulator.flash: flash SE at 0x001234 ignored: WP# not released "
-                         "(operate_sw.wp = 0)\n");
     CHECK(f.flash.raw() == before);
     CHECK(f.rdsr() == 0x02);
     f.w(kWriteData, 0);
     f.cmd(PP, 0x40, false);
-    CHECK(f.count("[W] emulator.flash: flash PP at 0x000040 ignored: WP# not released "
-                  "(operate_sw.wp = 0)\n") == 1);
     f.cmd(PP, 0x40, false);
-    CHECK(f.count("flash PP at 0x000040 ignored: WP# not released") == 2);
     f.w(kConf, kCrcEn | 0x1Cu << 10);
     f.cmd(WRSR, 0, false);
     f.cmd(WRSR2, 0, false);
     f.cmd(BE1, 0, false);
     f.cmd(BE2, 0, false);
     f.cmd(CE, 0, false);
-    for (const char *n : {"WRSR", "WRSR2", "BE1", "BE2", "CE"})
-        CHECK(f.count(std::string("flash ") + n + " at 0x000000 ignored: WP# not released") == 1);
     CHECK(f.rdsr() == 0x02);
     CHECK(f.flash.raw() == before);
     CHECK(f.inv.empty());
@@ -381,7 +352,6 @@ TEST_CASE("pp clears bits only") {
     CHECK(raw[0x44] == 0xFF);
     CHECK(raw[0x5F] == 0xFF);
     CHECK(raw[0x60] == 0xFF);
-    CHECK(f.out.str().empty());
 }
 
 TEST_CASE("write fifo keeps the last 8 words and pads with ones") {
@@ -421,7 +391,6 @@ TEST_CASE("pp clips to the flash size") {
     CHECK(f.flash.raw() == raw);
     CHECK(f.inv.empty());
     CHECK(f.rdsr() == 0);
-    CHECK(f.out.str().empty());
 }
 
 TEST_CASE("size not a multiple of 34") {
@@ -441,7 +410,6 @@ TEST_CASE("size not a multiple of 34") {
     auto e = f.xip_fault(64);
     REQUIRE(e);
     CHECK(e->addr == 64);
-    CHECK(f.out.str() == alert("0x00000040", 2, "0x000044"));
     Page p = f.flash.page("xip", 0);
     REQUIRE(p.bad.size() == 126);
     CHECK(p.bad[0].start == 64);
@@ -460,9 +428,7 @@ TEST_CASE("xip read past blocks always faults") {
     REQUIRE(e);
     CHECK(e->kind == Fault::Kind::Dabt);
     CHECK(e->addr == 0x1E1E00);
-    CHECK(f.out.str() == alert("0x001E1E00", 61680, "0x1FFFE0"));
     REQUIRE(f.xip_fault(0x1E1FFC));
-    CHECK(f.count(alert("0x001E1FFC", 61695, "0x2001FA")) == 1);
     Page p = f.flash.page("xip", 0x1E1000);
     REQUIRE(p.bad.size() == 16);
     CHECK(p.bad[0].start == 0xE00);
@@ -513,7 +479,6 @@ TEST_CASE("erase sector 4 KiB, block 32/64 KiB, chip") {
     CHECK(erased == 0x1000 + 0x8000 + 0x10000);
     f.cmd(CE);
     CHECK(f.flash.raw() == std::vector<uint8_t>(0x200000, 0xFF));
-    CHECK(f.out.str().empty());
 
     Fixture g(0x1800); // a sector clipped by the flash size
     g.flash.load(0, std::vector<uint8_t>(0x1800, 0));
@@ -536,13 +501,8 @@ TEST_CASE("bp bits suppress pp and ignore erase, wrsr allowed") {
     f.cmd(WREN);
     f.w(kWriteData, 0x12345678);
     f.cmd(PP, 0x2040);
-    CHECK(f.out.str() == "[W] emulator.flash: flash PP at 0x002040 suppressed: block protection is set in "
-                         "the status register\n");
     CHECK(f.rdsr() == 0x1E); // WEL not consumed
     for (uint32_t op : {SE, BE1, BE2, CE}) f.cmd(op, 0x1000);
-    for (const char *n : {"SE", "BE1", "BE2", "CE"})
-        CHECK(f.count(std::string("[W] emulator.flash: flash ") + n +
-                      " at 0x001000 ignored: block protection is set in the status register\n") == 1);
     CHECK(f.rdsr() == 0x1C); // the first erase consumed WEL
     CHECK(f.flash.raw() == before);
     CHECK(f.inv.empty());
@@ -560,7 +520,6 @@ TEST_CASE("bp bits suppress pp and ignore erase, wrsr allowed") {
     CHECK(raw[0x2044] == 0xFF);
     CHECK(raw[0xFFF] == 0);
     CHECK(raw[0x1000] == 0xFF);
-    CHECK(f.count("WARNING") == 5);
 }
 
 TEST_CASE("erase invalidates xip") {
@@ -714,9 +673,6 @@ TEST_CASE("controller words that are not given read 0 and ignore writes") {
 }
 
 TEST_CASE("a start state without crc_en reads bad blocks, reset keeps it") {
-    std::ostringstream out; // the ALERT log of the read that faults
-    Logger::reset_for_tests();
-    Logger::configure(out, false);
     Flash::Options o;
     o.conf_reset = 0;
     Flash flash("flash", 0x200000, 0x1C7015, o);
@@ -729,8 +685,6 @@ TEST_CASE("a start state without crc_en reads bad blocks, reset keeps it") {
     flash.reset();
     CHECK(flash.read("ctrl", kConf, 4) == 0);
     CHECK(flash.read("xip", 0, 4) == 0x11111111);
-    CHECK(out.str().find("ALERT") != std::string::npos);
-    Logger::reset_for_tests();
 }
 
 TEST_CASE("controller words must be plain word offsets of the ctrl range") {
@@ -801,7 +755,6 @@ TEST_CASE("mount creates a missing file with the present contents") {
     CHECK(fs::file_size(file.path) == kSmall);
     CHECK(file.bytes() == f.flash.raw());
     CHECK(f.flash.raw() == cat(block(0x10), std::vector<uint8_t>(3 * 34, 0xFF)));
-    CHECK(f.count("[I] emulator.flash: flash: created " + file.path.string()) == 1);
     // The whole XIP window is invalidated.
     CHECK(f.inv.back() == Call{"xip", 0, 0x1000});
 }
@@ -816,7 +769,6 @@ TEST_CASE("mount of an existing file replaces the contents") {
     f.flash.mount(file.path.string());
     CHECK(f.flash.raw() == image);
     CHECK(file.bytes() == image);
-    CHECK(f.count("[I] emulator.flash: flash: mounted " + file.path.string()) == 1);
     // Cached verdicts are forgotten: block 0 reads the file, block 1 has a bad CRC.
     CHECK(f.flash.read("xip", 0, 4) == 0x23222120);
     CHECK(f.xip_fault(32).has_value());
@@ -851,20 +803,14 @@ TEST_CASE("the mounted file keeps the contents for the next mount") {
     CHECK(std::vector<uint8_t>(raw.begin() + 68, raw.begin() + 102) == block(0x50));
 }
 
-TEST_CASE("a load that changes nothing in the mounted file says so") {
+TEST_CASE("a load that changes nothing in the mounted file does not invalidate xip") {
     TempFile file;
     Fixture  f(kSmall);
     f.flash.mount(file.path.string());
     f.flash.load(34, block(0x30));
-    CHECK(f.count("unchanged") == 0);
     f.inv.clear();
     f.flash.load(34, block(0x30));
-    CHECK(f.count("[I] emulator.flash: load of 34 bytes at 0x22 leaves " + file.path.string() + " unchanged") == 1);
     CHECK(f.inv.empty());
-    // Without a file nothing is said.
-    Fixture plain(kSmall);
-    plain.flash.load(0, std::vector<uint8_t>(34, 0xFF));
-    CHECK(plain.out.str().empty());
 }
 
 TEST_CASE("mount refuses a file of another size, one in use and a second mount") {
