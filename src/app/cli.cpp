@@ -72,6 +72,10 @@ std::string usage() {
            "  --wifi-internet      Let the firmware reach the internet through the router\n"
            "                       (NAT to the host's network); without it only the LAN,\n"
            "                       ping and published ports work; needs --wifi-ap\n"
+           "  --pcap FILE          Record the WiFi frames (802.11 with radiotap) in FILE as\n"
+           "                       pcap; FILE may be a named pipe (mkfifo) that Wireshark\n"
+           "                       reads live: wireshark -k -i FILE; needs --wifi-ap,\n"
+           "                       --ssid or --publish\n"
            "  -h, --help           Show this help and exit\n"
            "\n"
            "Environment:\n"
@@ -125,6 +129,10 @@ CliOptions parse_cli(int argc, char **argv) {
             std::string pass = value();
             if (pass.size() < 8 || pass.size() > 63) throw CliError("--wifi-password needs 8 to 63 characters");
             o.wifi_password = std::move(pass);
+        } else if (opt == "--pcap") {
+            std::string file = value();
+            if (file.empty()) throw CliError("--pcap needs a file name");
+            o.pcap = std::move(file);
         } else if (opt == "--wifi-internet") {
             o.wifi_internet = true;
         } else if (opt == "--wifi-channel") {
@@ -185,6 +193,8 @@ CliOptions parse_cli(int argc, char **argv) {
     if ((o.wifi_password || wifi_channel || o.wifi_internet) && !o.wifi_ap)
         throw CliError("--wifi-password, --wifi-channel and --wifi-internet need --wifi-ap");
     if (o.wifi_ap && o.ssid) throw CliError("--wifi-ap and --ssid exclude each other");
+    if (o.pcap && !o.wifi_ap && !o.ssid && o.publish.empty())
+        throw CliError("--pcap needs --wifi-ap, --ssid or --publish");
     return o;
 }
 

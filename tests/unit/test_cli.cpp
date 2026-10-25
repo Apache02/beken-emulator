@@ -59,6 +59,7 @@ TEST_CASE("usage text lists every option") {
                                "--wifi-password PASS",
                                "--wifi-channel N",
                                "--wifi-internet",
+                               "--pcap FILE",
                                "--flash-mount [NAME=]FILE",
                                "-h, --help",
                                "BKEMU_PROFILES"})
@@ -230,6 +231,17 @@ TEST_CASE("cli wifi ap options") {
               .wifi_password == std::string(63, 'p'));
     // -p works in the AP role too.
     CHECK(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "-p", "8080:80"}).publish.size() == 1);
+}
+
+TEST_CASE("cli pcap") {
+    CHECK_FALSE(parse({"BK7252", "--load", "ram:x.bin"}).pcap);
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "--pcap", "a.cap"}).pcap == "a.cap");
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--ssid", "n", "--pcap=b.cap"}).pcap == "b.cap");
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "-p", "8080:80", "--pcap", "c.cap"}).pcap == "c.cap");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "--pcap", ""}) == "--pcap needs a file name");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--wifi-ap", "n", "--pcap"}) == "--pcap needs a value");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--pcap", "a.cap"}) ==
+          "--pcap needs --wifi-ap, --ssid or --publish");
 }
 
 TEST_CASE("cli wifi ap errors") {

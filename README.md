@@ -162,6 +162,26 @@ switching. `--log-level net.ap=debug`, `--log-level net.router=debug` and
 `--log-level net.nat=debug` show the access point's, the router's and the NAT's
 messages.
 
+### Capturing the WiFi traffic
+
+`--pcap FILE` (with `--wifi-ap`, `--ssid` or `-p`) records the 802.11 frames
+the firmware sends and receives: link type 802.11 plus radiotap, which names
+the channel the firmware's radio is on once it is known. Beacons, probes,
+authentication, association, the WPA2 handshake and the data frames are all
+there. The emulated MAC does not encrypt, so data frames are plain and
+Wireshark shows the IP traffic without a key. Timestamps are device time,
+counted from zero. Every frame is written at once, so a file can be followed
+while the emulator runs. Wireshark reads a named pipe live:
+
+```
+mkfifo /tmp/bk.cap
+wireshark -k -i /tmp/bk.cap &
+build/bkemu BK7252 --load ... --wifi-ap TESTNET --pcap /tmp/bk.cap
+```
+
+Opening a pipe waits for its reader, and the emulator says so. If the reader
+goes away, the capture stops with one warning and the emulator carries on.
+
 ### Known limitation: start the host tool after the app banner
 
 Start `bkloader` (or anything that sends input at once) only after the app's

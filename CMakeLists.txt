@@ -56,6 +56,7 @@ add_library(bk_core STATIC
         src/net/station.cpp
         src/net/forwarder.cpp
         src/net/network.cpp
+        src/net/pcap.cpp
         src/net/router/crypto.cpp
         src/net/router/access_point.cpp
         src/net/router/authenticator.cpp
@@ -95,6 +96,7 @@ add_executable(unit_tests
         tests/unit/test_router.cpp
         tests/unit/test_router_network.cpp
         tests/unit/test_nat.cpp
+        tests/unit/test_pcap.cpp
         tests/unit/test_i2c1.cpp
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp

@@ -22,6 +22,7 @@
 #include "core/profile_loader.h"
 #include "i2c/catalog.h"
 #include "net/network.h"
+#include "net/pcap.h"
 #include "net/router/router_network.h"
 #include "periph/flash.h"
 #include "periph/i2c1.h"
@@ -117,7 +118,12 @@ int run(int argc, char **argv) {
     // before that.
     std::unique_ptr<bk::Network>       network;
     std::unique_ptr<bk::RouterNetwork> router_network;
+    std::unique_ptr<bk::PcapWriter>    pcap;
+    std::unique_ptr<bk::CapturingAir>  capture;
     bk::WifiMac                       *mac = nullptr;
+    bk::WifiAir                       *air = nullptr;
+    // The channel the firmware's radio is on, when the access point knows it.
+    bk::AccessPoint::TunedChannel radio;
     if (!options.publish.empty() || options.ssid || options.wifi_ap) {
         mac = dynamic_cast<bk::WifiMac *>(machine.module("MAC"));
         if (!mac)
@@ -131,6 +137,7 @@ int run(int argc, char **argv) {
             auto                         *rc = dynamic_cast<bk::Unknown *>(machine.module("RC"));
             bk::AccessPoint::TunedChannel tuned;
             if (rc) tuned = [rc] { return bk::channel_from_rc(rc->peek(0x94)); };
+            radio = tuned;
             bk::ApConfig ap{*options.wifi_ap, options.wifi_password, options.wifi_channel};
             router_network = std::make_unique<bk::RouterNetwork>(std::move(ap),
                                                                  options.publish,
@@ -140,13 +147,23 @@ int run(int argc, char **argv) {
                                                                  bk::host_resolver(),
                                                                  bk::Nat::kDnsPort,
                                                                  options.wifi_internet);
-            mac->attach(router_network.get());
+            air            = router_network.get();
             for (const bk::Publish &p : router_network->addresses()) std::cout << bk::describe(p) << std::endl;
         } else {
             network = std::make_unique<bk::Network>(options.publish, bk::Network::kDefaultMac, options.ssid);
-            mac->attach(network.get());
+            air     = network.get();
             for (const bk::Publish &p : network->addresses()) std::cout << bk::describe(p) << std::endl;
         }
+        if (options.pcap) {
+            // Opening a named pipe waits for its reader.
+            if (std::filesystem::is_fifo(*options.pcap))
+                std::cout << "pcap: waiting for a reader of " << *options.pcap << std::endl;
+            pcap    = std::make_unique<bk::PcapWriter>(*options.pcap);
+            capture = std::make_unique<bk::CapturingAir>(*air, *pcap, bk::Logger::get("net.pcap"), radio);
+            air     = capture.get();
+            std::cout << "pcap: recording WiFi frames to " << *options.pcap << std::endl;
+        }
+        mac->attach(air);
     }
 
     // A write to a closed stdout must not kill the emulator.
