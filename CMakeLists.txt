@@ -47,6 +47,7 @@ add_library(bk_core STATIC
         src/periph/timer.cpp
         src/periph/trng.cpp
         src/periph/uart.cpp
+        src/periph/sdhost.cpp
         src/periph/unknown.cpp
         src/periph/wifi/frame_engine.cpp
         src/periph/wifi/mac.cpp
@@ -101,6 +102,7 @@ add_executable(unit_tests
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp
         tests/unit/test_saradc.cpp
+        tests/unit/test_sdhost.cpp
         tests/unit/test_unknown.cpp
         tests/unit/test_timer.cpp
         tests/unit/test_uart.cpp

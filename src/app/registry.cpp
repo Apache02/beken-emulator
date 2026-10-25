@@ -18,6 +18,7 @@
 #include "periph/jpeg.h"
 #include "periph/saradc.h"
 #include "periph/sctrl.h"
+#include "periph/sdhost.h"
 #include "periph/timer.h"
 #include "periph/trng.h"
 #include "periph/uart.h"
@@ -201,6 +202,11 @@ ModuleRegistry builtin_registry() {
     };
     r["saradc"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Saradc>(ctx.name, ctx.irq, u32_param(ctx, "sample", 330));
+    };
+    r["sdhost"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t size = u32_param(ctx, "size", 0x100);
+        if (size <= SdHost::kStatus) bad(ctx, "size must cover the status register");
+        return std::make_unique<SdHost>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction, log_level(ctx));
     };
     r["sctrl"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Sctrl>(ctx.name,

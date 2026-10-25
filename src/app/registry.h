@@ -29,6 +29,8 @@ namespace bk {
 //   sctrl: chip_id, device_id, reset_words (cold values), warm_reset_words
 //          (overrides after a chip reset), signals (as for intc),
 //          read_adjust (list of { offset, shift, width, add })
+//   sdhost: size (default 0x100), reset_words (as for intc); an SD host with no
+//          card in the slot, see SdHost
 //   timer: irq, hz (default 26000000)
 //   trng:  no parameters
 //   unknown: size (default 0x100), reset_words (as for intc)

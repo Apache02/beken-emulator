@@ -188,6 +188,20 @@ intc = "ICU"
 irq = 11
 sample = 3200
 
+# The SD host with no card: a command times out.
+[[module]]
+type = "sdhost"
+name = "SDCARD"
+[module.bases]
+regs = 0x00802D00
+[module.params]
+size = 0x100
+[module.params.reset_words]
+"0x08" = 0xffffffff
+"0x10" = 0xffffffff
+"0x30" = 0xf79ffeff
+"0x34" = 0x00fb0000
+
 # More WiFi stand-ins: AGC microcode RAM and RF control (the transceiver SPI
 # shim's busy bit is a plain register, so its writes complete at once).
 [[module]]

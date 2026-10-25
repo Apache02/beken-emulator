@@ -138,6 +138,7 @@ const std::vector<std::pair<const char *, const char *>> kShippedModules = {
     {"MDM_3000", "unknown" },
     {"AUDIO",    "unknown" },
     {"SAR_ADC",  "saradc"  },
+    {"SDCARD",   "sdhost"  },
     {"AGC_RAM",  "unknown" },
     {"RC",       "unknown" },
     {"NX_INTC",  "unknown" },
