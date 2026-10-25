@@ -9,7 +9,9 @@ namespace bk {
 
 namespace {
 constexpr uint32_t kChipId = 0x00, kDeviceId = 0x04;
-}
+// The sleep register's mode field (bits 15:0) and the word that means deep sleep.
+constexpr uint32_t kSleep = 0x104, kSleepModeMask = 0xFFFF, kSleepModeDeep = 0xADC1;
+} // namespace
 
 Sctrl::Sctrl(std::string                       name,
              uint32_t                          chip_id,
@@ -44,10 +46,12 @@ uint32_t Sctrl::read(const std::string &, uint32_t offset, uint32_t) {
 void Sctrl::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
     if (offset == kChipId || offset == kDeviceId) return;
     words_[offset] = value;
+    if (offset == kSleep && (value & kSleepModeMask) == kSleepModeDeep) deep_sleep_ = true;
 }
 
 void Sctrl::reset() {
-    words_ = reset_words_;
+    deep_sleep_ = false;
+    words_      = reset_words_;
     for (const auto &[offset, value] : warm_reset_words_) words_[offset] = value;
 }
 

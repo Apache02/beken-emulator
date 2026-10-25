@@ -174,6 +174,10 @@ size = 192
 "0x3C" = 0x00001836
 
 # No analog input: every sample reads `sample`. The interrupt is ICU source 11.
+# 3200 reads as about 1.84 V with the SDK's default calibration (low 0x14F,
+# high 0xD98), a healthy battery behind a divider. The camera firmware enters
+# deep sleep when a battery check reads low: 330, below the calibrated zero,
+# and 2000 (1.15 V) both made it do so; 3200 and 3900 did not.
 [[module]]
 type = "saradc"
 name = "SAR_ADC"
@@ -182,7 +186,7 @@ regs = 0x00802C00
 [module.params]
 intc = "ICU"
 irq = 11
-sample = 330
+sample = 3200
 
 # More WiFi stand-ins: AGC microcode RAM and RF control (the transceiver SPI
 # shim's busy bit is a plain register, so its writes complete at once).

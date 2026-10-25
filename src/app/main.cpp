@@ -26,6 +26,7 @@
 #include "net/router/router_network.h"
 #include "periph/flash.h"
 #include "periph/i2c1.h"
+#include "periph/sctrl.h"
 #include "periph/uart.h"
 #include "periph/unknown.h"
 #include "periph/wifi/mac.h"
@@ -190,7 +191,15 @@ int run(int argc, char **argv) {
     }
 
     machine.cpu().reset(0);
-    machine.scheduler().run_forever([] { return g_stop != 0; });
+    // The chip powers down in deep sleep and only a wake-up brings it back,
+    // which is not emulated: the run ends there.
+    auto *sctrl = dynamic_cast<bk::Sctrl *>(machine.module("SCTRL"));
+    machine.scheduler().run_forever([sctrl] { return g_stop != 0 || (sctrl && sctrl->deep_sleep()); });
+    // The last bytes of a burst are not due yet.
+    for (const auto &[name, endpoint] : endpoints)
+        if (auto *uart = dynamic_cast<bk::Uart *>(machine.module(name))) uart->flush();
+    if (sctrl && sctrl->deep_sleep())
+        std::cout << "The firmware put the chip into deep sleep; wake-up is not emulated, stopping." << std::endl;
 
     if (mac) mac->attach(nullptr);
     if (network) network->close();

@@ -17,7 +17,10 @@ struct ReadAdjust {
     uint32_t add;
 };
 
-// System control: chip identity plus plain 32-bit words.
+// System control: chip identity plus plain 32-bit words. Writing the deep sleep
+// word to the sleep register (the firmware's last step into deep sleep, where
+// the chip powers down until a wake-up) is noted for whoever runs the machine;
+// nothing else happens, and wake-up is not emulated.
 class Sctrl : public Module {
   public:
     Sctrl(std::string                       name,
@@ -41,6 +44,9 @@ class Sctrl : public Module {
     void   reset() override;
     Signal signal(const std::string &signal_name) override;
 
+    // The firmware wrote the deep sleep word since the last reset.
+    bool deep_sleep() const { return deep_sleep_; }
+
   private:
     uint32_t stored(uint32_t offset) const;
 
@@ -49,6 +55,7 @@ class Sctrl : public Module {
     std::map<uint32_t, uint32_t>      reset_words_, warm_reset_words_, words_;
     std::map<std::string, SignalSpec> signals_;
     std::vector<ReadAdjust>           read_adjust_;
+    bool                              deep_sleep_ = false;
 };
 
 } // namespace bk

@@ -182,6 +182,15 @@ build/bkemu BK7252 --load ... --wifi-ap TESTNET --pcap /tmp/bk.cap
 Opening a pipe waits for its reader, and the emulator says so. If the reader
 goes away, the capture stops with one warning and the emulator carries on.
 
+### Deep sleep
+
+When the firmware puts the chip into deep sleep, the chip powers down until a
+wake-up, and the wake-up (GPIO, RTC) is not emulated: the emulator prints
+`The firmware put the chip into deep sleep; ... stopping.` and exits with
+status 0. Firmware often does this when a battery check reads low; the SAR ADC
+has no analog input, so its profile parameter `sample` stands for the battery
+(3200, about 1.84 V by the SDK's default calibration, reads as healthy).
+
 ### Known limitation: start the host tool after the app banner
 
 Start `bkloader` (or anything that sends input at once) only after the app's

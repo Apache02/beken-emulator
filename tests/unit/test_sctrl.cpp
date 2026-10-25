@@ -153,6 +153,23 @@ TEST_CASE("sctrl signal uses the biased read") {
     CHECK(div()); // stored divider 0 reads as 1
 }
 
+TEST_CASE("sctrl: the deep sleep word in the sleep register is noted until reset") {
+    Sctrl s = make();
+    CHECK_FALSE(s.deep_sleep());
+    // The other sleep modes and other registers do not count.
+    w(s, 0x104, 0x4F89);
+    w(s, 0x104, 0xB706);
+    w(s, 0x100, 0xADC1);
+    w(s, 0x108, 0xADC1);
+    CHECK_FALSE(s.deep_sleep());
+    // Bits above the mode field are the firmware's own.
+    w(s, 0x104, 0x00A6ADC1);
+    CHECK(s.deep_sleep());
+    CHECK(r(s, 0x104) == 0x00A6ADC1);
+    s.reset();
+    CHECK_FALSE(s.deep_sleep());
+}
+
 TEST_CASE("sctrl unknown signal is refused") {
     Sctrl s = make();
     CHECK_THROWS_WITH_AS(s.signal("nope"), "sctrl: no signal nope", std::invalid_argument);

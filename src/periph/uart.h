@@ -36,6 +36,10 @@ class Uart : public Module {
     std::optional<uint64_t> next_event_ns() const override;
     void                    reset() override;
 
+    // Hands the bytes waiting for the end of their batch to the endpoint now,
+    // for when the run ends before the batch is due.
+    void flush() { flush_tx(); }
+
   private:
     static constexpr size_t kDepth = 128;
 
