@@ -29,7 +29,10 @@ class Nat {
     using ToGuest = std::function<bool(uint32_t src, uint8_t protocol, std::span<const uint8_t> payload)>;
 
     static constexpr uint64_t kUdpIdleNs = 60'000'000'000;
-    static constexpr uint16_t kDnsPort   = 53;
+    // An ICMP session (one ping run) is closed after this long without a request.
+    static constexpr uint64_t kIcmpIdleNs      = 30'000'000'000;
+    static constexpr size_t   kMaxIcmpSessions = 64;
+    static constexpr uint16_t kDnsPort         = 53;
     // Open sockets at most; beyond that the longest idle session gives way.
     static constexpr size_t kMaxUdpSessions = 256;
     // A host connection not made by then is given up; the firmware gets an RST.
@@ -58,6 +61,11 @@ class Nat {
     // A TCP segment from the firmware to `dst` beyond the LAN. A SYN opens a
     // session; a segment for no session gets an RST.
     void tcp_out(uint32_t guest, uint32_t dst, const packets::Tcp &segment, uint64_t now_ns);
+    // An ICMP echo request from the firmware to `dst` beyond the LAN, sent on
+    // an unprivileged ICMP socket of the host; the echo reply goes back to the
+    // firmware with its own identifier. The host must allow the process such a
+    // socket (net.ipv4.ping_group_range); otherwise one warning and no reply.
+    void icmp_out(uint32_t guest, uint32_t dst, const packets::IcmpEcho &echo, uint64_t now_ns);
     // Host sockets; never blocks.
     void poll(uint64_t now_ns);
     // Closes the UDP sessions idle for kUdpIdleNs, gives up host connections
@@ -68,14 +76,26 @@ class Nat {
     void   reset();
     size_t udp_sessions() const { return udp_.size(); }
     size_t tcp_sessions() const { return tcp_.size(); }
+    size_t icmp_sessions() const { return icmp_.size(); }
     // Bytes queued towards the firmware over all TCP sessions, not yet acknowledged.
     size_t tcp_buffered() const;
     // Bytes from the firmware held for the host sockets, over all TCP sessions.
     size_t tcp_held() const;
     // No session, so nothing to poll.
-    bool empty() const { return udp_.empty() && tcp_.empty(); }
+    bool empty() const { return udp_.empty() && tcp_.empty() && icmp_.empty(); }
 
   private:
+    // The host's ICMP socket does the pinging; the kernel gives its echo
+    // requests an identifier of its own, so replies are mapped back to the
+    // firmware's `id`.
+    struct IcmpSession {
+        int      fd        = -1;
+        uint32_t guest     = 0;
+        uint64_t last_seen = 0;
+    };
+    // Destination address and the firmware's echo identifier.
+    using IcmpKey = std::pair<uint32_t, uint16_t>;
+
     struct UdpSession {
         int      fd        = -1;
         uint32_t guest     = 0;
@@ -98,6 +118,7 @@ class Nat {
                   std::span<const uint8_t> data,
                   uint64_t                 now);
     void receive(const UdpKey &key, UdpSession &s, uint64_t now);
+    void receive_icmp(const IcmpKey &key, IcmpSession &s, uint64_t now);
     void make_room();
     // The DNS relay's session to the upstream, not the firmware's own UDP.
     bool is_dns(const UdpKey &key) const { return std::get<1>(key) == gateway_ && std::get<2>(key) == kDnsPort; }
@@ -117,13 +138,14 @@ class Nat {
     TcpMap::iterator settle(TcpMap::iterator it, bool keep);
     void             close_tcp(TcpSession &s);
 
-    ToGuest                      to_guest_;
-    uint32_t                     gateway_;
-    std::optional<uint32_t>      dns_upstream_;
-    Logger                      &log_;
-    uint16_t                     dns_port_;
-    std::map<UdpKey, UdpSession> udp_;
-    TcpMap                       tcp_;
+    ToGuest                        to_guest_;
+    uint32_t                       gateway_;
+    std::optional<uint32_t>        dns_upstream_;
+    Logger                        &log_;
+    uint16_t                       dns_port_;
+    std::map<UdpKey, UdpSession>   udp_;
+    TcpMap                         tcp_;
+    std::map<IcmpKey, IcmpSession> icmp_;
     // The latest time passed in, for the TCP flows' clock.
     uint64_t now_      = 0;
     uint32_t next_iss_ = 0;

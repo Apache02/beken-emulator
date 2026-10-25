@@ -304,6 +304,44 @@ TEST_CASE("nat: UDP goes out through a host socket and the answer comes back fro
     CHECK(f.count("firmware connects to") == 1);
 }
 
+TEST_CASE("nat: a ping goes out on an ICMP socket and the reply keeps the firmware's id") {
+    Fixture f;
+    // Needs net.ipv4.ping_group_range to hold the test's group; where it does
+    // not, the NAT warns once and the firmware gets no answer.
+    int probe = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, IPPROTO_ICMP);
+    if (probe >= 0) ::close(probe);
+
+    const Bytes data = {1, 2, 3, 4};
+    f.nat.icmp_out(kGuest, kLocal, {false, 0x1234, 7, data}, 0);
+    if (probe < 0) {
+        CHECK(f.nat.icmp_sessions() == 0);
+        CHECK(f.count("ping_group_range") == 1);
+        f.nat.icmp_out(kGuest, kLocal, {false, 0x1234, 8, data}, 0);
+        CHECK(f.count("ping_group_range") == 1);
+        return;
+    }
+    REQUIRE(f.poll_until_sent(0));
+    REQUIRE(f.sent.size() == 1);
+    CHECK(f.sent[0].src == kLocal);
+    CHECK(f.sent[0].protocol == kProtoIcmp);
+    auto echo = parse_icmp_echo(f.sent[0].payload);
+    REQUIRE(echo);
+    CHECK(echo->reply);
+    CHECK(echo->id == 0x1234);
+    CHECK(echo->seq == 7);
+    CHECK(Bytes(echo->data.begin(), echo->data.end()) == data);
+    CHECK(f.nat.icmp_sessions() == 1);
+    CHECK_FALSE(f.nat.empty());
+    CHECK(f.nat.next_event_ns() == Nat::kIcmpIdleNs);
+
+    // A second request of the run reuses the socket; an idle one is closed.
+    f.nat.icmp_out(kGuest, kLocal, {false, 0x1234, 8, data}, kSec);
+    CHECK(f.nat.icmp_sessions() == 1);
+    f.nat.tick(kSec + Nat::kIcmpIdleNs);
+    CHECK(f.nat.icmp_sessions() == 0);
+    CHECK(f.nat.empty());
+}
+
 TEST_CASE("nat: TCP and UDP to one address are told once in all") {
     Fixture f;
     Remote  remote;

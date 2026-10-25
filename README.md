@@ -145,6 +145,12 @@ first TCP or UDP connection to each remote address once (`firmware connects to
 127.0.0.53:53`). A DNS server that refuses the queries or never answers them
 is reported with one warning.
 
+Ping to an internet address works too: the echo request is sent on an
+unprivileged ICMP socket of the emulator, which the kernel allows only for the
+groups in `net.ipv4.ping_group_range`. Many systems default to `1 0` (nobody);
+then the first ping logs a warning and gets no reply. To allow your group:
+`sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"`.
+
 The emulator runs the firmware about ten times slower than real time, so a
 join takes tens of seconds, and a remote server sees a slow client.
 

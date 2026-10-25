@@ -35,6 +35,7 @@ constexpr size_t kMaxPayload = 1500 - 20 - 8;
 constexpr uint64_t kWarnNoResolver  = 0;
 constexpr uint64_t kWarnDnsRefused  = 1;
 constexpr uint64_t kWarnDnsNoAnswer = 2;
+constexpr uint64_t kWarnNoPing      = 3;
 
 std::string dotted(uint32_t ip) {
     return std::format("{}.{}.{}.{}", ip >> 24, ip >> 16 & 0xff, ip >> 8 & 0xff, ip & 0xff);
@@ -87,6 +88,8 @@ void Nat::reset() {
         ::close(s->fd);
     }
     tcp_.clear();
+    for (auto &[key, s] : icmp_) ::close(s.fd);
+    icmp_.clear();
 }
 
 void Nat::udp_out(
@@ -293,7 +296,10 @@ void Nat::make_room() {
 }
 
 void Nat::tell(uint32_t remote, uint16_t port, const char *protocol) {
-    if (seen_.insert(remote).second)
+    if (!seen_.insert(remote).second) return;
+    if (port == 0)
+        log_.log(Level::Info, std::format("firmware reaches {} ({})", dotted(remote), protocol));
+    else
         log_.log(Level::Info, std::format("firmware connects to {}:{} ({})", dotted(remote), port, protocol));
 }
 
@@ -343,6 +349,62 @@ void Nat::send_udp(
     }
 }
 
+void Nat::icmp_out(uint32_t guest, uint32_t dst, const IcmpEcho &echo, uint64_t now) {
+    now_ = now;
+    if (echo.reply) return;
+    const IcmpKey key{dst, echo.id};
+    auto          it = icmp_.find(key);
+    if (it == icmp_.end()) {
+        if (icmp_.size() >= kMaxIcmpSessions) {
+            auto oldest = icmp_.begin();
+            for (auto i = icmp_.begin(); i != icmp_.end(); ++i)
+                if (i->second.last_seen < oldest->second.last_seen) oldest = i;
+            ::close(oldest->second.fd);
+            icmp_.erase(oldest);
+        }
+        int fd = ::socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, IPPROTO_ICMP);
+        if (fd < 0) {
+            if (errno == EACCES || errno == EPERM)
+                log_.warn_once(kWarnNoPing,
+                               "ping to the internet needs an unprivileged ICMP socket: put your group in "
+                               "net.ipv4.ping_group_range (sysctl)");
+            else
+                log_.log(Level::Debug, std::format("ping to {} dropped: {}", dotted(dst), std::strerror(errno)));
+            return;
+        }
+        sockaddr_in sa{};
+        sa.sin_family      = AF_INET;
+        sa.sin_addr.s_addr = htonl(dst);
+        if (::connect(fd, reinterpret_cast<sockaddr *>(&sa), sizeof sa) != 0) {
+            log_.log(Level::Debug, std::format("ping to {} dropped: {}", dotted(dst), std::strerror(errno)));
+            ::close(fd);
+            return;
+        }
+        tell(dst, 0, "icmp");
+        it = icmp_.emplace(key, IcmpSession{fd, guest, now}).first;
+    }
+    it->second.guest     = guest;
+    it->second.last_seen = now;
+    // The kernel replaces the identifier and the checksum.
+    Bytes message = build_icmp_echo({false, echo.id, echo.seq, echo.data});
+    if (::send(it->second.fd, message.data(), message.size(), MSG_DONTWAIT | MSG_NOSIGNAL) < 0)
+        log_.log(Level::Debug, std::format("ping to {}: {}", dotted(dst), std::strerror(errno)));
+}
+
+void Nat::receive_icmp(const IcmpKey &key, IcmpSession &s, uint64_t now) {
+    static thread_local std::vector<uint8_t> buf(65536);
+    for (int i = 0; i < kMaxDatagrams; ++i) {
+        ssize_t n = ::recv(s.fd, buf.data(), buf.size(), 0);
+        if (n < 0) return; // nothing more, or an error that ends this poll
+        s.last_seen = now;
+        auto echo   = parse_icmp_echo({buf.data(), size_t(n)});
+        if (!echo || !echo->reply || size_t(n) > kMaxPayload) continue;
+        if (!to_guest_(key.first, kProtoIcmp, build_icmp_echo({true, key.second, echo->seq, echo->data})))
+            log_.log(Level::Debug,
+                     std::format("ping reply from {} dropped: the firmware has no address", dotted(key.first)));
+    }
+}
+
 void Nat::receive(const UdpKey &key, UdpSession &s, uint64_t now) {
     const auto [guest_port, src, src_port] = key;
     // Largest UDP payload; static so the poll does not put 64 KiB on the stack.
@@ -373,6 +435,7 @@ void Nat::receive(const UdpKey &key, UdpSession &s, uint64_t now) {
 void Nat::poll(uint64_t now) {
     now_ = now;
     for (auto &[key, s] : udp_) receive(key, s, now);
+    for (auto &[key, s] : icmp_) receive_icmp(key, s, now);
     for (auto it = tcp_.begin(); it != tcp_.end();) {
         TcpSession &s = *it->second;
         if (s.connecting) {
@@ -431,12 +494,22 @@ void Nat::tick(uint64_t now) {
             ++it;
         }
     }
+    for (auto it = icmp_.begin(); it != icmp_.end();) {
+        if (now - it->second.last_seen >= kIcmpIdleNs) {
+            ::close(it->second.fd);
+            it = icmp_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 std::optional<uint64_t> Nat::next_event_ns() const {
     std::optional<uint64_t> next;
     for (const auto &[key, s] : udp_)
         if (!next || s.last_seen + kUdpIdleNs < *next) next = s.last_seen + kUdpIdleNs;
+    for (const auto &[key, s] : icmp_)
+        if (!next || s.last_seen + kIcmpIdleNs < *next) next = s.last_seen + kIcmpIdleNs;
     for (const auto &[key, s] : tcp_) {
         auto d = s->connecting ? std::optional(s->started + kConnectTimeoutNs) : s->flow->deadline();
         if (d && (!next || *d < *next)) next = d;

@@ -105,6 +105,11 @@ void Router::on_ipv4(const Ethernet &eth) {
             nat_->tcp_out(guest_ip_, ip->dst, *tcp, now_);
             return;
         }
+        if (nat_ && ip->protocol == kProtoIcmp) {
+            auto echo = parse_icmp_echo(ip->payload);
+            if (echo) nat_->icmp_out(guest_ip_, ip->dst, *echo, now_);
+            return;
+        }
         log_.log(Level::Debug, std::format("no route to {}, dropped", dotted(ip->dst)));
         return;
     }
