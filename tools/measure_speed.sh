@@ -2,7 +2,7 @@
 # Reports emulation speed; no pass/fail threshold.
 #
 # The bootloader's autoboot countdown is an idle-free busy loop. Premises,
-# from the SDK sources (paths relative to the SDK root):
+# from the custom SDK sources (paths relative to its root):
 #
 # - src/applications/bootloader/main.cpp, enter_shell(): each of the two
 #   ticks is ten busy_wait_ms(100) calls with a UART poll in between.
@@ -78,7 +78,7 @@ ms() { awk -v us="$1" 'BEGIN { printf "%.1f", us / 1000 }'; }
 echo "emulator: $EMULATOR"
 echo "bootloader countdown: $INSNS_PER_TICK instructions per tick, insns_per_us = $INSNS_PER_US"
 echo "note: not checked: the bootloader programs 120 MHz (read as 96 MHz through read_adjust);"
-echo "note: not checked: 2 instructions per 4-cycle busy-wait iteration (from the SDK's busy_wait.c)"
+echo "note: not checked: 2 instructions per 4-cycle busy-wait iteration (from the custom SDK's busy_wait.c)"
 total_us=0
 ticks=0
 for run in $(seq 1 "$RUNS"); do

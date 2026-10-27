@@ -12,27 +12,27 @@ namespace bk {
 namespace {
 
 constexpr uint32_t kConfig = 0x00, kData = 0x04;
-constexpr uint32_t kEnsmb = 1u << 0, kSta = 1u << 1, kSto = 1u << 2, kAckTx = 1u << 3, kTxMode = 1u << 4;
-constexpr unsigned kFreqShift = 6;
-constexpr uint32_t kFreqMask  = 0x3FF;
-constexpr uint32_t kSi = 1u << 16, kAckRx = 1u << 17, kAckReq = 1u << 18, kBusy = 1u << 19;
-constexpr uint32_t kWritable = kEnsmb | kSta | kAckTx | kTxMode | (kFreqMask << kFreqShift) | kSi;
+constexpr uint32_t kEnable = 1u << 0, kStart = 1u << 1, kStop = 1u << 2, kTxAck = 1u << 3, kTxMode = 1u << 4;
+constexpr unsigned kClkDivShift = 6;
+constexpr uint32_t kClkDivMask  = 0x3FF;
+constexpr uint32_t kIntFlag = 1u << 16, kRxAck = 1u << 17, kAckReq = 1u << 18, kBusy = 1u << 19;
+constexpr uint32_t kWritable = kEnable | kStart | kTxAck | kTxMode | (kClkDivMask << kClkDivShift) | kIntFlag;
 
 Logger &log() { return Logger::get("i2c"); }
 
 std::string describe(uint32_t value) {
     std::string out;
     for (auto [name, bit] : {
-             std::pair{"ensmb",   kEnsmb },
-             std::pair{"sta",     kSta   },
-             std::pair{"sto",     kSto   },
-             std::pair{"ack_tx",  kAckTx },
-             std::pair{"tx_mode", kTxMode},
-             std::pair{"si",      kSi    }
+             std::pair{"enable",   kEnable },
+             std::pair{"start",    kStart  },
+             std::pair{"stop",     kStop   },
+             std::pair{"tx_ack",   kTxAck  },
+             std::pair{"tx_mode",  kTxMode },
+             std::pair{"int_flag", kIntFlag}
     }) {
         if (value & bit) out += std::string(name) + " ";
     }
-    return out + "div=" + std::to_string((value >> kFreqShift) & kFreqMask);
+    return out + "clk_div=" + std::to_string((value >> kClkDivShift) & kClkDivMask);
 }
 
 std::string hex(const char *format, uint32_t value) {
@@ -56,7 +56,7 @@ void I2c1::attach(I2cDevice *device) {
 void I2c1::reset() {
     config_ = 0;
     data_   = 0;
-    ack_rx_ = ack_req_ = busy_ = false;
+    rx_ack_ = ack_req_ = busy_ = false;
     phase_                     = Phase::Idle;
     device_                    = nullptr;
     event_.reset();
@@ -66,7 +66,7 @@ void I2c1::reset() {
 
 uint32_t I2c1::read(const std::string &, uint32_t offset, uint32_t) {
     if (offset == kData) return data_;
-    return config_ | (ack_rx_ ? kAckRx : 0) | (ack_req_ ? kAckReq : 0) | (busy_ ? kBusy : 0);
+    return config_ | (rx_ack_ ? kRxAck : 0) | (ack_req_ ? kAckReq : 0) | (busy_ ? kBusy : 0);
 }
 
 void I2c1::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
@@ -94,17 +94,17 @@ void I2c1::write_config(uint32_t value) {
     const uint32_t previous = config_;
     config_                 = value & kWritable;
     log().log(Level::Debug, "config <= " + hex("0x%08X", value) + " (" + describe(value) + ")");
-    if (!(config_ & kEnsmb)) {
+    if (!(config_ & kEnable)) {
         abort();
-        config_ &= ~kSi;
+        config_ &= ~kIntFlag;
         drive();
         return;
     }
-    if ((value & kSto) && phase_ != Phase::Idle) {
+    if ((value & kStop) && phase_ != Phase::Idle) {
         stop();
-    } else if ((value & kSta) && !(previous & kSta)) {
+    } else if ((value & kStart) && !(previous & kStart)) {
         start();
-    } else if ((previous & kSi) && !(config_ & kSi) && phase_ != Phase::Idle) {
+    } else if ((previous & kIntFlag) && !(config_ & kIntFlag) && phase_ != Phase::Idle) {
         ack_req_ = false;
         proceed();
     }
@@ -112,7 +112,7 @@ void I2c1::write_config(uint32_t value) {
 }
 
 uint64_t I2c1::byte_ns() const {
-    const uint64_t divider = (config_ >> kFreqShift) & kFreqMask;
+    const uint64_t divider = (config_ >> kClkDivShift) & kClkDivMask;
     return std::max<uint64_t>(9 * (6 + 3 * (divider + 1)) * 1'000'000'000ULL / ref_hz_, 1);
 }
 
@@ -130,7 +130,7 @@ void I2c1::stop() {
         device_ = nullptr;
     }
     phase_ = Phase::Idle;
-    config_ &= ~kSi;
+    config_ &= ~kIntFlag;
     ack_req_ = false;
     schedule(Kind::Stop, byte_ns() / 4);
 }
@@ -140,14 +140,14 @@ void I2c1::abort() {
     device_ = nullptr;
     phase_  = Phase::Idle;
     event_.reset();
-    ack_rx_ = ack_req_ = busy_ = false;
+    rx_ack_ = ack_req_ = busy_ = false;
 }
 
-// Software cleared `si`: the next phase starts.
+// Software cleared `int_flag`: the next phase starts.
 void I2c1::proceed() {
     if (config_ & kTxMode)
         schedule(Kind::Send, byte_ns());
-    else if (phase_ == Phase::Addressed || (config_ & kAckTx))
+    else if (phase_ == Phase::Addressed || (config_ & kTxAck))
         schedule(Kind::Receive, byte_ns());
 }
 
@@ -159,34 +159,34 @@ void I2c1::finish(Kind kind) {
             const bool     read    = data_ & 1;
             auto           it      = devices_.find(static_cast<uint8_t>(address));
             device_                = address < 0x80 && it != devices_.end() ? it->second : nullptr;
-            ack_rx_                = device_ && device_->begin(read);
+            rx_ack_                = device_ && device_->begin(read);
             log().log(Level::Debug,
                       "address " + hex("0x%02X", address) + (read ? " read: " : " write: ") +
-                          (ack_rx_ ? "ack" : "nack"));
-            if (!ack_rx_) device_ = nullptr;
+                          (rx_ack_ ? "ack" : "nack"));
+            if (!rx_ack_) device_ = nullptr;
             phase_ = Phase::Addressed;
-            config_ |= kSi;
+            config_ |= kIntFlag;
             break;
         }
         case Kind::Send:
-            ack_rx_ = device_ && device_->write(static_cast<uint8_t>(data_));
-            log().log(Level::Debug, "write " + hex("0x%02X", data_) + (ack_rx_ ? ": ack" : ": nack"));
+            rx_ack_ = device_ && device_->write(static_cast<uint8_t>(data_));
+            log().log(Level::Debug, "write " + hex("0x%02X", data_) + (rx_ack_ ? ": ack" : ": nack"));
             phase_ = Phase::Data;
-            config_ |= kSi;
+            config_ |= kIntFlag;
             break;
         case Kind::Receive:
             data_ = device_ ? device_->read() : 0xFF;
             log().log(Level::Debug, "read " + hex("0x%02X", data_));
             ack_req_ = true;
             phase_   = Phase::Data;
-            config_ |= kSi;
+            config_ |= kIntFlag;
             break;
         case Kind::Stop: busy_ = false; break;
     }
 }
 
 void I2c1::drive() {
-    const bool level = (config_ & kSi) != 0;
+    const bool level = (config_ & kIntFlag) != 0;
     if (level != level_) {
         level_ = level;
         log().log(Level::Debug, std::string("interrupt line ") + (level ? "high" : "low"));

@@ -6,8 +6,8 @@
 namespace bk {
 
 namespace {
-constexpr uint32_t kConfig = 0x00, kFifoConfig = 0x04, kFifoStatus = 0x08, kData = 0x0C, kIrqEnable = 0x10,
-                   kIrqStatus = 0x14;
+constexpr uint32_t kConfig = 0x00, kFifoConfig = 0x04, kFifoStatus = 0x08, kData = 0x0C, kIntEnable = 0x10,
+                   kIntStatus = 0x14;
 
 constexpr uint32_t kTxNeedWrite = 1u << 0, kRxNeedRead = 1u << 1, kTxStopEnd = 1u << 5, kRxStopEnd = 1u << 6,
                    kLatchedMask = kTxStopEnd | kRxStopEnd;
@@ -46,7 +46,7 @@ void Uart::refill() {
 }
 
 void Uart::update_line() {
-    if (irq_) irq_((raw() & irq_enable_) != 0);
+    if (irq_) irq_((raw() & int_enable_) != 0);
 }
 
 uint32_t Uart::read(const std::string &, uint32_t offset, uint32_t) {
@@ -63,8 +63,8 @@ uint32_t Uart::read(const std::string &, uint32_t offset, uint32_t) {
                 update_line();
             }
             break;
-        case kIrqEnable: v = irq_enable_; break;
-        case kIrqStatus: v = raw() & irq_enable_; break;
+        case kIntEnable: v = int_enable_; break;
+        case kIntStatus: v = raw() & int_enable_; break;
         default: v = words_[(offset >> 2) % words_.size()]; break;
     }
     return v;
@@ -83,8 +83,8 @@ void Uart::write(const std::string &, uint32_t offset, uint32_t, uint32_t value)
             latched_ |= kTxStopEnd;
             break;
         }
-        case kIrqEnable: irq_enable_ = value & 0xFF; break;
-        case kIrqStatus: latched_ &= ~(value & kLatchedMask); break;
+        case kIntEnable: int_enable_ = value & 0xFF; break;
+        case kIntStatus: latched_ &= ~(value & kLatchedMask); break;
         default: words_[(offset >> 2) % words_.size()] = value; break;
     }
     update_line();
@@ -120,7 +120,7 @@ void Uart::reset() {
     fifo_.clear();
     backlog_.clear();
     flush_tx(); // bytes the firmware already sent still reach the host
-    fifo_config_ = irq_enable_ = latched_ = 0;
+    fifo_config_ = int_enable_ = latched_ = 0;
     words_                                = {};
     last_tick_                            = 0;
     stop_deadline_.reset();

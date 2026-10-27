@@ -50,7 +50,7 @@ ctrl = 0x00803000
 [module.params]
 size = 0x200000
 # The controller as the vendor ROM leaves it at bootloader entry (measured).
-conf_reset = 0x0400000f       # conf: crc_en and clk_conf = 15
+config_reset = 0x0400000f     # config: crc_en and clk_conf = 15
 m_value_reset = 0xa0          # the quad-mode M byte
 read_ptr_reset = 1            # the ROM has read from the FIFO: pointer at 1
 [module.params.reset_words]
@@ -174,10 +174,10 @@ size = 192
 "0x3C" = 0x00001836
 
 # No analog input: every sample reads `sample`. The interrupt is ICU source 11.
-# 3200 reads as about 1.84 V with the SDK's default calibration (low 0x14F,
-# high 0xD98), a healthy battery behind a divider. The camera firmware enters
-# deep sleep when a battery check reads low: 330, below the calibrated zero,
-# and 2000 (1.15 V) both made it do so; 3200 and 3900 did not.
+# 3200 was found by trial: the vendor camera firmware (built from the vendor
+# SDK) enters deep sleep at start when its battery check reads low; 330 and
+# 2000 made it do so, 3200 and 3900 did not. For reference, the vendor SDK's
+# default calibration (low 0x14F, high 0xD98) reads 3200 as about 1.84 V.
 [[module]]
 type = "saradc"
 name = "SAR_ADC"
@@ -247,8 +247,8 @@ size = 64
 
 # The counters, state machine, interrupts and timers are emulated; the rest of
 # the MAC registers are stand-ins. The counters run while SCTRL's MAC power key
-# is set. The ICU lines are the FIQ_MAC_* sources of the SDK. The MAC is busy:
-# its stand-in accesses are logged at DEBUG (`--log-level unknown=debug`).
+# is set. The ICU lines are the FIQ_MAC_* sources of the vendor SDK. The MAC is
+# busy: its stand-in accesses are logged at DEBUG (`--log-level unknown=debug`).
 [[module]]
 type = "wifi_mac"
 name = "MAC"
@@ -314,7 +314,7 @@ pin_reset = 0x28
 "0x058" = 0x68  # GPIO22
 "0x05c" = 0x68  # GPIO23
 "0x09c" = 0x02  # detect: is_usb_plug_in
-"0x0b8" = 0x5500  # func_mux_2: GPIO 20-23 in peripheral mode 2
+"0x0b8" = 0x5500  # func_mode_16_31: GPIO 20-23 in peripheral mode 2
 
 # I2C1 on GPIO20/21. Devices on the bus are chosen on the command line.
 # ref_hz: the clock source the bus divider divides (26 MHz crystal).

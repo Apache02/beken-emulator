@@ -15,8 +15,8 @@ using namespace bk;
 namespace {
 
 constexpr uint32_t kConfig = 0, kData = 4;
-constexpr uint32_t kEnsmb = 1u << 0, kSta = 1u << 1, kSto = 1u << 2, kAckTx = 1u << 3, kTxMode = 1u << 4;
-constexpr uint32_t kSi = 1u << 16, kAckRx = 1u << 17, kAckReq = 1u << 18, kBusy = 1u << 19;
+constexpr uint32_t kEnable = 1u << 0, kStart = 1u << 1, kStop = 1u << 2, kTxAck = 1u << 3, kTxMode = 1u << 4;
+constexpr uint32_t kIntFlag = 1u << 16, kRxAck = 1u << 17, kAckReq = 1u << 18, kBusy = 1u << 19;
 constexpr uint32_t kDiv0 = 0; // divider 0: byte time = 9 * 9 / 26 MHz = 3115 ns
 
 struct FakeClock : Clock {
@@ -88,44 +88,44 @@ TEST_CASE("i2c1 data register keeps 8 bits") {
     CHECK(f.r(kData) == 0x34);
 }
 
-TEST_CASE("i2c1 config keeps only the writable bits and reads sto back as 0") {
+TEST_CASE("i2c1 config keeps only the writable bits and reads stop back as 0") {
     Fixture f;
-    f.w(kConfig, kEnsmb | kAckTx | kTxMode | (0x155u << 6));
-    CHECK(f.r(kConfig) == (kEnsmb | kAckTx | kTxMode | (0x155u << 6)));
-    f.w(kConfig, 0xFFFFFFFF & ~kSta & ~kSto); // status bits are not writable
-    CHECK((f.r(kConfig) & (kAckRx | kAckReq | kBusy)) == 0);
-    CHECK((f.r(kConfig) & kSto) == 0);
+    f.w(kConfig, kEnable | kTxAck | kTxMode | (0x155u << 6));
+    CHECK(f.r(kConfig) == (kEnable | kTxAck | kTxMode | (0x155u << 6)));
+    f.w(kConfig, 0xFFFFFFFF & ~kStart & ~kStop); // status bits are not writable
+    CHECK((f.r(kConfig) & (kRxAck | kAckReq | kBusy)) == 0);
+    CHECK((f.r(kConfig) & kStop) == 0);
 }
 
 TEST_CASE("i2c1 start schedules the address byte one byte time later") {
     Fixture f;
     f.clock.now = 1000;
     f.w(kData, 0x60); // address 0x30, write
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     CHECK((f.r(kConfig) & kBusy) != 0);
     CHECK(f.i2c.next_event_ns() == std::optional<uint64_t>(1000 + f.byte_ns()));
     CHECK_FALSE(f.line());
     f.step();
     CHECK(f.line());
-    CHECK((f.r(kConfig) & kSi) != 0);
-    CHECK((f.r(kConfig) & kAckRx) != 0);
+    CHECK((f.r(kConfig) & kIntFlag) != 0);
+    CHECK((f.r(kConfig) & kRxAck) != 0);
     CHECK(f.dev.log == std::vector<std::string>{"begin-write"});
 }
 
 TEST_CASE("i2c1 byte time follows the divider and the reference clock") {
     Fixture f;
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta | (10u << 6));
+    f.w(kConfig, kEnable | kStart | (10u << 6));
     CHECK(f.i2c.next_event_ns() == std::optional<uint64_t>(f.byte_ns(10)));
     CHECK(f.byte_ns(10) == 9ULL * 39 * 1'000'000'000ULL / 26'000'000);
 
     Fixture slow(1'000'000);
-    slow.w(kConfig, kEnsmb | kSta);
+    slow.w(kConfig, kEnable | kStart);
     CHECK(slow.i2c.next_event_ns() == std::optional<uint64_t>(9ULL * 9 * 1'000'000'000ULL / 1'000'000));
 
     // Never zero, even at an absurd clock.
     Fixture fast(0xFFFFFFFFu);
-    fast.w(kConfig, kEnsmb | kSta);
+    fast.w(kConfig, kEnable | kStart);
     CHECK(*fast.i2c.next_event_ns() >= 1);
 }
 
@@ -133,20 +133,20 @@ TEST_CASE("i2c1 a full write transaction") {
     Fixture f;
     // Address 0x30 write.
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
     REQUIRE(f.line());
-    // Software clears si and sends a byte.
+    // Software clears int_flag and sends a byte.
     f.w(kData, 0x04);
-    f.w(kConfig, kEnsmb | kTxMode); // sta stays clear, si clear
+    f.w(kConfig, kEnable | kTxMode); // start stays clear, int_flag clear
     CHECK_FALSE(f.line());
     f.step();
     CHECK(f.line());
-    CHECK((f.r(kConfig) & kAckRx) != 0);
+    CHECK((f.r(kConfig) & kRxAck) != 0);
     // Stop.
-    f.w(kConfig, kEnsmb | kTxMode | kSto);
+    f.w(kConfig, kEnable | kTxMode | kStop);
     CHECK_FALSE(f.line());
-    CHECK((f.r(kConfig) & kSto) == 0); // one-shot
+    CHECK((f.r(kConfig) & kStop) == 0); // one-shot
     CHECK((f.r(kConfig) & kBusy) != 0);
     f.step();
     CHECK((f.r(kConfig) & kBusy) == 0);
@@ -156,14 +156,14 @@ TEST_CASE("i2c1 a full write transaction") {
 TEST_CASE("i2c1 a nacked address forgets the device and nacks the data") {
     Fixture f;
     f.w(kData, 0x62); // address 0x31: nobody
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
-    CHECK((f.r(kConfig) & kAckRx) == 0);
+    CHECK((f.r(kConfig) & kRxAck) == 0);
     CHECK(f.line());
     f.w(kData, 0x01);
-    f.w(kConfig, kEnsmb | kTxMode);
+    f.w(kConfig, kEnable | kTxMode);
     f.step();
-    CHECK((f.r(kConfig) & kAckRx) == 0);
+    CHECK((f.r(kConfig) & kRxAck) == 0);
     CHECK(f.dev.log.empty());
 }
 
@@ -171,45 +171,45 @@ TEST_CASE("i2c1 a device that does not acknowledge the address is forgotten") {
     Fixture f;
     f.dev.ack = false;
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
-    CHECK((f.r(kConfig) & kAckRx) == 0);
+    CHECK((f.r(kConfig) & kRxAck) == 0);
     f.dev.ack = true;
     f.w(kData, 0x07);
-    f.w(kConfig, kEnsmb | kTxMode);
+    f.w(kConfig, kEnable | kTxMode);
     f.step();
     CHECK(f.dev.log == std::vector<std::string>{"begin-write"}); // the data byte never reached it
-    CHECK((f.r(kConfig) & kAckRx) == 0);
+    CHECK((f.r(kConfig) & kRxAck) == 0);
 }
 
-TEST_CASE("i2c1 read: the first byte follows the address, the next ones need ack_tx") {
+TEST_CASE("i2c1 read: the first byte follows the address, the next ones need tx_ack") {
     Fixture f;
     f.w(kData, 0x61); // address 0x30, read
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     f.step();
     REQUIRE(f.line());
-    // Clear si: the phase is `addressed`, so a byte is received.
-    f.w(kConfig, kEnsmb);
+    // Clear int_flag: the phase is `addressed`, so a byte is received.
+    f.w(kConfig, kEnable);
     CHECK_FALSE(f.line());
     f.step();
     CHECK(f.line());
     CHECK(f.r(kData) == 0x5A);
     CHECK((f.r(kConfig) & kAckReq) != 0);
-    // Without ack_tx the next clear of si does not receive anything.
-    f.w(kConfig, kEnsmb);
+    // Without tx_ack the next clear of int_flag does not receive anything.
+    f.w(kConfig, kEnable);
     CHECK((f.r(kConfig) & kAckReq) == 0);
     CHECK_FALSE(f.i2c.next_event_ns().has_value());
 }
 
-TEST_CASE("i2c1 read with ack_tx keeps receiving") {
+TEST_CASE("i2c1 read with tx_ack keeps receiving") {
     Fixture f;
     f.w(kData, 0x61);
-    f.w(kConfig, kEnsmb | kSta | kAckTx);
+    f.w(kConfig, kEnable | kStart | kTxAck);
     f.step();
-    f.w(kConfig, kEnsmb | kAckTx);
+    f.w(kConfig, kEnable | kTxAck);
     f.step();
     CHECK(f.r(kData) == 0x5A);
-    f.w(kConfig, kEnsmb | kAckTx);
+    f.w(kConfig, kEnable | kTxAck);
     f.step();
     CHECK(f.r(kData) == 0x5B);
     CHECK(f.dev.log == std::vector<std::string>{"begin-read", "read", "read"});
@@ -218,9 +218,9 @@ TEST_CASE("i2c1 read with ack_tx keeps receiving") {
 TEST_CASE("i2c1 read without a device returns 0xFF") {
     Fixture f;
     f.w(kData, 0x63);
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     f.step();
-    f.w(kConfig, kEnsmb);
+    f.w(kConfig, kEnable);
     f.step();
     CHECK(f.r(kData) == 0xFF);
 }
@@ -228,34 +228,34 @@ TEST_CASE("i2c1 read without a device returns 0xFF") {
 TEST_CASE("i2c1 stop before any phase happened is ignored, stop in a phase tells the device") {
     Fixture f;
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta);
-    f.w(kConfig, kEnsmb | kSto); // phase is still idle (the address byte is on the wire)
+    f.w(kConfig, kEnable | kStart);
+    f.w(kConfig, kEnable | kStop); // phase is still idle (the address byte is on the wire)
     CHECK(f.dev.log.empty());
-    // The pending event is the address byte; sta was in `previous`, so it is not restarted.
+    // The pending event is the address byte; start was in `previous`, so it is not restarted.
     f.step();
-    f.w(kConfig, kEnsmb | kSto);
+    f.w(kConfig, kEnable | kStop);
     CHECK(f.dev.log.back() == "stop");
-    CHECK((f.r(kConfig) & kSi) == 0);
+    CHECK((f.r(kConfig) & kIntFlag) == 0);
     CHECK(f.i2c.next_event_ns() == std::optional<uint64_t>(f.clock.now + f.byte_ns() / 4));
 }
 
-TEST_CASE("i2c1 sta set again after being set does not restart") {
+TEST_CASE("i2c1 start set again after being set does not restart") {
     Fixture f;
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     uint64_t due = *f.i2c.next_event_ns();
     f.clock.now  = 100;
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     CHECK(f.i2c.next_event_ns() == std::optional<uint64_t>(due));
-    // Clearing and setting sta does restart (and the pending event is replaced).
-    f.w(kConfig, kEnsmb);
-    f.w(kConfig, kEnsmb | kSta);
+    // Clearing and setting start does restart (and the pending event is replaced).
+    f.w(kConfig, kEnable);
+    f.w(kConfig, kEnable | kStart);
     CHECK(f.i2c.next_event_ns() == std::optional<uint64_t>(100 + f.byte_ns()));
 }
 
-TEST_CASE("i2c1 clearing ensmb aborts the transfer") {
+TEST_CASE("i2c1 clearing enable aborts the transfer") {
     Fixture f;
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
     REQUIRE(f.line());
     f.w(kConfig, 0);
@@ -268,20 +268,20 @@ TEST_CASE("i2c1 clearing ensmb aborts the transfer") {
 TEST_CASE("i2c1 a new event replaces the pending one") {
     Fixture f;
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
     f.w(kData, 1);
-    f.w(kConfig, kEnsmb | kTxMode); // send scheduled
+    f.w(kConfig, kEnable | kTxMode); // send scheduled
     REQUIRE(f.i2c.next_event_ns().has_value());
-    f.w(kConfig, kEnsmb | kTxMode | kSto); // stop replaces it
-    f.step();                              // only the stop event runs
+    f.w(kConfig, kEnable | kTxMode | kStop); // stop replaces it
+    f.step();                                // only the stop event runs
     CHECK(f.dev.log == std::vector<std::string>{"begin-write", "stop"});
     CHECK_FALSE(f.i2c.next_event_ns().has_value());
 }
 
 TEST_CASE("i2c1 tick before the due time does nothing") {
     Fixture f;
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     uint64_t due = *f.i2c.next_event_ns();
     f.i2c.tick(due - 1);
     CHECK_FALSE(f.line());
@@ -300,7 +300,7 @@ TEST_CASE("i2c1 attaching two devices at one address is an error") {
 TEST_CASE("i2c1 reset clears registers, the event and the line") {
     Fixture f;
     f.w(kData, 0x60);
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
     REQUIRE(f.line());
     f.i2c.reset();
@@ -313,10 +313,10 @@ TEST_CASE("i2c1 reset clears registers, the event and the line") {
 TEST_CASE("i2c1 works without an interrupt line") {
     FakeClock clock;
     I2c1      i2c("I2C1", clock, {}, 26'000'000);
-    i2c.write("regs", kConfig, 4, kEnsmb | kSta);
+    i2c.write("regs", kConfig, 4, kEnable | kStart);
     clock.now = *i2c.next_event_ns();
     i2c.tick(clock.now);
-    CHECK((i2c.read("regs", kConfig, 4) & kSi) != 0);
+    CHECK((i2c.read("regs", kConfig, 4) & kIntFlag) != 0);
 }
 
 TEST_CASE("i2c1 talks to a register device") {
@@ -330,20 +330,20 @@ TEST_CASE("i2c1 talks to a register device") {
     f.i2c.attach(&reg);
     auto send = [&](uint8_t byte) {
         f.w(kData, byte);
-        f.w(kConfig, kEnsmb | kTxMode);
+        f.w(kConfig, kEnable | kTxMode);
         f.step();
     };
     f.w(kData, 0x80); // 0x40 write
-    f.w(kConfig, kEnsmb | kSta | kTxMode);
+    f.w(kConfig, kEnable | kStart | kTxMode);
     f.step();
     send(0x04); // offset
-    f.w(kConfig, kEnsmb | kTxMode | kSto);
+    f.w(kConfig, kEnable | kTxMode | kStop);
     f.step();
-    f.w(kConfig, kEnsmb);
+    f.w(kConfig, kEnable);
     f.w(kData, 0x81); // 0x40 read
-    f.w(kConfig, kEnsmb | kSta);
+    f.w(kConfig, kEnable | kStart);
     f.step();
-    f.w(kConfig, kEnsmb);
+    f.w(kConfig, kEnable);
     f.step();
     CHECK(f.r(kData) == 0x96);
 }

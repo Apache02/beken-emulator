@@ -41,7 +41,8 @@ struct FakeClock : Clock {
 };
 
 constexpr uint32_t kEnable = 1, kFinInt = 2, kHalfInt = 4, kRepeat = 8, kSrcInc = 0x100, kDstInc = 0x200;
-constexpr uint32_t kStatus = 0xE0, kPrio = 0xDC;
+constexpr uint32_t kSrcLoop = 0x400, kDstLoop = 0x800;
+constexpr uint32_t kIntStatus = 0xE0, kPrio = 0xDC;
 
 constexpr uint32_t cfg(uint32_t length_bytes, uint32_t sdw, uint32_t ddw, uint32_t flags) {
     return (length_bytes - 1) << 16 | ddw << 6 | sdw << 4 | flags;
@@ -76,7 +77,8 @@ struct Fixture {
             dma.tick(clock.now);
             if (clock.now > 10'000'000'000ULL) FAIL("runs away");
         }
-    }};
+    }
+};
 
 } // namespace
 
@@ -86,7 +88,7 @@ TEST_CASE("gdma has one range of 0x200 bytes and resets idle") {
     CHECK(f.dma.ranges()[0].name == "regs");
     CHECK(f.dma.ranges()[0].size == 0x200);
     CHECK(f.r(0x00) == 0);
-    CHECK(f.r(kStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK_FALSE(f.dma.next_event_ns().has_value());
     CHECK(f.r(0x1F0) == 0); // unknown offsets read 0
 }
@@ -121,24 +123,29 @@ TEST_CASE("gdma prio_mode keeps bit 0; pause registers are plain words") {
     CHECK(f.r(0x100 + 4 * 5) == 0);
 }
 
-TEST_CASE("gdma memory to memory copies at the end of the modelled time") {
+TEST_CASE("gdma memory to memory moves its words as time passes") {
     Fixture f;
     // 64 bytes, 32-bit both sides: 16 writes * 7.2 cycles at 120 MHz = 960 ns.
     f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
     CHECK(f.r(0x00) == (cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt) | 1));
     CHECK(f.dma.next_event_ns() == std::optional<uint64_t>(16ULL * 72 * 100'000'000 / 120'000'000));
     CHECK(f.mem.writes == 0);
+    f.clock.now = 480;
+    f.dma.tick(480);
+    CHECK(f.mem.writes == 8);
     f.clock.now = 959;
     f.dma.tick(959);
-    CHECK(f.mem.writes == 0);
+    CHECK(f.mem.writes == 15);
+    CHECK((f.r(0x00) & 1) == 1);
+    CHECK(f.r(kIntStatus) == 0);
     f.clock.now = 960;
     f.dma.tick(960);
     for (uint32_t i = 0; i < 64; ++i) CHECK(f.mem.bytes[0x400 + i] == f.mem.bytes[0x100 + i]);
     CHECK((f.r(0x00) & 1) == 0);
-    CHECK(f.r(kStatus) == 1);
+    CHECK(f.r(kIntStatus) == 1);
     CHECK(f.line());
     CHECK_FALSE(f.dma.next_event_ns().has_value());
-    f.w(kStatus, 1);
+    f.w(kIntStatus, 1);
     CHECK_FALSE(f.line());
 }
 
@@ -146,7 +153,7 @@ TEST_CASE("gdma without fin_int_en finishes silently") {
     Fixture f;
     f.start(0, 0x100, 0x400, cfg(16, 2, 2, kSrcInc | kDstInc));
     f.run_to_end();
-    CHECK(f.r(kStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK_FALSE(f.line());
     CHECK(f.mem.bytes[0x400] == f.mem.bytes[0x100]);
 }
@@ -157,15 +164,16 @@ TEST_CASE("gdma half finish flag comes at half time and is acknowledged separate
     CHECK(f.dma.next_event_ns() == std::optional<uint64_t>(480));
     f.clock.now = 480;
     f.dma.tick(480);
-    CHECK(f.r(kStatus) == (1u << 8));
+    CHECK(f.r(kIntStatus) == (1u << 8));
     CHECK(f.line());
-    CHECK(f.mem.writes == 0);
+    CHECK(f.mem.writes == 8);
+    CHECK((f.r(0xC0) & 0x1FFFF) == 32); // half of the bytes left
     f.run_to_end();
-    CHECK(f.r(kStatus) == (1u | 1u << 8));
-    f.w(kStatus, 1u << 8);
-    CHECK(f.r(kStatus) == 1);
+    CHECK(f.r(kIntStatus) == (1u | 1u << 8));
+    f.w(kIntStatus, 1u << 8);
+    CHECK(f.r(kIntStatus) == 1);
     CHECK(f.line());
-    f.w(kStatus, 1);
+    f.w(kIntStatus, 1);
     CHECK_FALSE(f.line());
 }
 
@@ -215,13 +223,188 @@ TEST_CASE("gdma fixed addresses read and write the same place") {
     CHECK(f.mem.bytes[0x400] == f.mem.bytes[0x100]);
 }
 
-TEST_CASE("gdma memory to memory uses the registers as they are at the end (quirk)") {
+TEST_CASE("gdma registers written while a channel runs do not change its transfer") {
     Fixture f;
     f.start(0, 0x100, 0x400, cfg(16, 2, 2, kSrcInc | kDstInc));
     f.w(0x04, 0x600); // destination changed while running
     f.run_to_end();
-    CHECK(f.mem.bytes[0x600] == f.mem.bytes[0x100]);
-    CHECK(f.mem.bytes[0x400] == static_cast<uint8_t>(0x400 * 3 + 1));
+    CHECK(f.mem.bytes[0x400] == f.mem.bytes[0x100]);
+    CHECK(f.mem.bytes[0x600] == static_cast<uint8_t>(0x600 * 3 + 1));
+}
+
+TEST_CASE("gdma destination loop wraps at the exclusive end to the window start") {
+    Fixture f;
+    // 64 words through a 16-word window: the window holds the last 16 words.
+    f.w(0x0C, 0x440); // dst loop end
+    f.w(0x10, 0x400); // dst loop start
+    f.start(0, 0x100, 0x400, cfg(256, 2, 2, kSrcInc | kDstInc | kDstLoop));
+    f.run_to_end();
+    for (uint32_t i = 0; i < 64; ++i) CHECK(f.mem.bytes[0x400 + i] == f.mem.bytes[0x100 + 192 + i]);
+    CHECK(f.mem.bytes[0x440] == static_cast<uint8_t>(0x440 * 3 + 1));
+    CHECK(f.r(0x160) == 0x400); // a whole number of turns
+}
+
+TEST_CASE("gdma source loop repeats its window; a start inside the window wraps to the window start") {
+    Fixture f;
+    f.w(0x14, 0x110); // src loop end: a 4-word window
+    f.w(0x18, 0x100); // src loop start
+    f.start(0, 0x108, 0x400, cfg(32, 2, 2, kSrcInc | kDstInc | kSrcLoop));
+    f.run_to_end();
+    // Words 2, 3, then 0, 1, 2, 3, 0, 1 of the window.
+    const uint32_t order[] = {2, 3, 0, 1, 2, 3, 0, 1};
+    for (uint32_t w = 0; w < 8; ++w)
+        for (uint32_t b = 0; b < 4; ++b) CHECK(f.mem.bytes[0x400 + 4 * w + b] == f.mem.bytes[0x100 + 4 * order[w] + b]);
+}
+
+TEST_CASE("gdma a loop with its end register at 0 is off") {
+    Fixture f;
+    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kDstLoop));
+    f.run_to_end();
+    CHECK(f.mem.bytes[0x43C] == f.mem.bytes[0x13C]);
+}
+
+TEST_CASE("gdma a stop keeps what was written, remain_len and dst_wr_addr; enable starts over") {
+    Fixture f;
+    std::fill(f.mem.bytes.begin() + 0x400, f.mem.bytes.begin() + 0x500, 0xEE);
+    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
+    f.clock.now = 300; // 5 words at 60 ns each
+    f.w(0x00, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
+    CHECK((f.r(0x00) & 1) == 0);
+    CHECK(f.mem.writes == 5);
+    CHECK(f.r(0xC0) == 64 - 20);
+    CHECK(f.r(0x160) == 0x414);
+    CHECK(f.mem.bytes[0x414] == 0xEE);
+    CHECK(f.r(kIntStatus) == 0);
+    f.clock.now = 10'000;
+    f.dma.tick(f.clock.now);
+    CHECK(f.mem.writes == 5);
+    // A bare enable copies the whole transfer again from the start addresses.
+    std::fill(f.mem.bytes.begin() + 0x400, f.mem.bytes.begin() + 0x500, 0xEE);
+    f.w(0x00, f.r(0x00) | kEnable);
+    f.run_to_end();
+    for (uint32_t i = 0; i < 64; ++i) CHECK(f.mem.bytes[0x400 + i] == f.mem.bytes[0x100 + i]);
+    CHECK(f.mem.bytes[0x440] == 0xEE);
+}
+
+TEST_CASE("gdma remain_len counts bytes for narrow widths") {
+    Fixture f;
+    f.start(0, 0x100, 0x400, cfg(64, 0, 0, kSrcInc | kDstInc)); // 64 one-byte writes
+    f.clock.now = 600;                                          // 10 of them
+    CHECK(f.r(0xC0) == 54);
+}
+
+TEST_CASE("gdma half finish flag holds the channel at the half point within a tick") {
+    Fixture f;
+    f.start(0, 0x100, 0x400, cfg(600, 2, 2, kSrcInc | kDstInc | kHalfInt));
+    f.clock.now = 100'000; // long after the whole transfer would have ended
+    f.dma.tick(f.clock.now);
+    CHECK(f.r(kIntStatus) == (1u << 8));
+    CHECK((f.r(0xC0) & 0x1FFFF) == 300);
+    CHECK((f.r(0x00) & 1) == 1);
+    f.clock.now = 200'000;
+    f.dma.tick(f.clock.now);
+    CHECK((f.r(0x00) & 1) == 0);
+    CHECK((f.r(0xC0) & 0x1FFFF) == 0);
+}
+
+TEST_CASE("gdma repeat mode continues the addresses and flags every cycle") {
+    Fixture f;
+    f.w(0x0C, 0x440); // dst window: 16 words
+    f.w(0x10, 0x400);
+    f.w(0x14, 0x140); // src window: 16 words
+    f.w(0x18, 0x100);
+    // 10 words per cycle: if each cycle restarted at the start, words 10..15 would never be written.
+    f.start(0, 0x100, 0x400, cfg(40, 2, 2, kSrcInc | kDstInc | kSrcLoop | kDstLoop | kRepeat | kFinInt));
+    for (int cycle = 1; cycle <= 3; ++cycle) {
+        auto next = f.dma.next_event_ns();
+        REQUIRE(next);
+        f.clock.now = *next;
+        f.dma.tick(f.clock.now);
+        CHECK(f.r(kIntStatus) == 1);
+        CHECK(((f.r(0xC0) >> 24) & 0xF) == static_cast<uint32_t>(cycle));
+        CHECK((f.r(0x00) & 1) == 1);
+        f.w(kIntStatus, 1);
+    }
+    for (uint32_t i = 0; i < 64; ++i) CHECK(f.mem.bytes[0x400 + i] == f.mem.bytes[0x100 + i]);
+    CHECK(f.r(0x160) == 0x400 + 4 * (30 % 16));
+    f.w(0x00, 0);
+    CHECK((f.r(0x00) & 1) == 0);
+    CHECK_FALSE(f.dma.next_event_ns().has_value());
+}
+
+TEST_CASE("gdma repeat mode without a finish interrupt keeps rewriting fixed addresses") {
+    Fixture f;
+    f.start(0, 0x100, 0x400, cfg(4, 2, 2, kRepeat));
+    CHECK_FALSE(f.dma.next_event_ns().has_value()); // no flag to wait for
+    f.clock.now = 6000;                             // 100 cycles of 60 ns
+    f.dma.tick(f.clock.now);
+    CHECK(f.mem.writes == 100);
+    f.mem.bytes[0x100] = 0x5A;
+    f.clock.now        = 6060;
+    f.dma.tick(f.clock.now);
+    CHECK(f.mem.bytes[0x400] == 0x5A);
+    CHECK((f.r(0x00) & 1) == 1);
+}
+
+TEST_CASE("gdma round-robin splits the bus evenly") {
+    Fixture f;
+    // Alone 64 bytes take 960 ns; two channels each get one word per 10 cycles: 1600 tenths = 1333 ns.
+    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
+    f.start(1, 0x200, 0x500, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
+    CHECK(f.dma.next_event_ns() == std::optional<uint64_t>(1334));
+    f.clock.now = 1300;
+    f.dma.tick(f.clock.now);
+    CHECK(f.r(kIntStatus) == 0);
+    f.clock.now = 1334;
+    f.dma.tick(f.clock.now);
+    CHECK(f.r(kIntStatus) == 3);
+}
+
+TEST_CASE("gdma fixed priority serves the higher priority, then the higher channel, first") {
+    Fixture f;
+    f.w(kPrio, 1);
+    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt | 3u << 12));
+    f.start(1, 0x200, 0x500, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt | 1u << 12));
+    f.start(2, 0x300, 0x600, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt | 1u << 12));
+    // Channel 0 runs at its full speed and finishes first.
+    f.clock.now = *f.dma.next_event_ns();
+    f.dma.tick(f.clock.now);
+    CHECK(f.clock.now == 960);
+    CHECK(f.r(kIntStatus) == 1);
+    f.run_to_end();
+    CHECK(f.r(kIntStatus) == 7);
+    // Channel 2 got the rest of the bus before channel 1.
+    Fixture g;
+    g.w(kPrio, 1);
+    g.start(1, 0x200, 0x500, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt | 1u << 12));
+    g.start(2, 0x300, 0x600, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt | 1u << 12));
+    g.clock.now = *g.dma.next_event_ns();
+    g.dma.tick(g.clock.now);
+    CHECK(g.r(kIntStatus) == 4);
+}
+
+TEST_CASE("gdma fixed priority never grants priority 0, not even after round-robin") {
+    Fixture f;
+    f.w(kPrio, 1);
+    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt));
+    CHECK_FALSE(f.dma.next_event_ns().has_value());
+    f.clock.now = 100'000;
+    f.dma.tick(f.clock.now);
+    CHECK(f.mem.writes == 0);
+    CHECK((f.r(0xC0) & 0x1FFFF) == 64);
+    CHECK(f.r(kIntStatus) == 0x00050000);
+    f.w(kPrio, 0);
+    f.clock.now = 200'000;
+    f.dma.tick(f.clock.now);
+    CHECK(f.mem.writes == 0);
+    CHECK((f.r(0x00) & 1) == 1);
+    f.w(0x00, 0);
+    CHECK(f.r(kIntStatus) == 0);
+    // Priority 1 alone runs normally.
+    f.w(kPrio, 1);
+    f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt | 1u << 12));
+    f.run_to_end();
+    CHECK(f.r(kIntStatus) == 1);
 }
 
 TEST_CASE("gdma timing grows with the pacing interval") {
@@ -248,7 +431,7 @@ TEST_CASE("gdma writing enable clear while running stops the channel silently") 
     f.clock.now = 100000;
     f.dma.tick(100000);
     CHECK(f.mem.writes == 0);
-    CHECK(f.r(kStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
 }
 
 TEST_CASE("gdma enable written while running does not restart") {
@@ -265,7 +448,7 @@ TEST_CASE("gdma bus error aborts the channel without flags") {
     f.start(0, 0x0FFC, 0x400, cfg(16, 2, 2, kSrcInc | kDstInc | kFinInt)); // the second read leaves memory
     f.run_to_end();
     CHECK((f.r(0x00) & 1) == 0);
-    CHECK(f.r(kStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
 }
 
 TEST_CASE("gdma other request lines are not emulated and stall") {
@@ -279,13 +462,6 @@ TEST_CASE("gdma other request lines are not emulated and stall") {
     // Software can still stop it.
     f.w(0x20, 0);
     CHECK((f.r(0x20) & 1) == 0);
-}
-
-TEST_CASE("gdma repeat mode runs once") {
-    Fixture f;
-    f.start(0, 0x100, 0x400, cfg(16, 2, 2, kSrcInc | kDstInc | kRepeat));
-    f.run_to_end();
-    CHECK(f.mem.writes == 4);
 }
 
 TEST_CASE("gdma paced channel moves words only while the line is up") {
@@ -309,13 +485,13 @@ TEST_CASE("gdma paced channel moves words only while the line is up") {
     CHECK(f.mem.writes == 2);
     CHECK(f.mem.bytes[0x400] == 1);
     CHECK(f.mem.bytes[0x404] == 2);
-    CHECK(f.r(kStatus) == (1u << 8));    // half done
-    CHECK(f.r(0xC0) == (2u | 1u << 28)); // two writes left, one half flag counted
+    CHECK(f.r(kIntStatus) == (1u << 8)); // half done
+    CHECK(f.r(0xC0) == (8u | 1u << 28)); // two writes (8 bytes) left, one half flag counted
     CHECK(f.r(0x160) == 0x408);
     f.run_to_end();
     CHECK(f.mem.writes == 4);
     CHECK((f.r(0x00) & 1) == 0);
-    CHECK(f.r(kStatus) == (1u | 1u << 8));
+    CHECK(f.r(kIntStatus) == (1u | 1u << 8));
     CHECK(f.r(0xC0) == (0u | 1u << 24 | 1u << 28));
     CHECK(f.r(0x160) == 0x410); // kept after the stop
 }
@@ -348,7 +524,7 @@ TEST_CASE("gdma paced channel bus error stops it") {
     f.clock.now = 10000;
     f.dma.tick(10000);
     CHECK((f.r(0x00) & 1) == 0);
-    CHECK(f.r(kStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
 }
 
 TEST_CASE("gdma request line is replaced by a later request, survives reset") {
@@ -365,18 +541,15 @@ TEST_CASE("gdma request line is replaced by a later request, survives reset") {
     CHECK(f.mem.bytes[0x400] == 5);
 }
 
-TEST_CASE("gdma int_counts and dst_wr_addr scale with time for a deferred channel") {
+TEST_CASE("gdma status and dst_wr_addr follow the words written") {
     Fixture f;
     f.start(0, 0x100, 0x400, cfg(64, 2, 2, kSrcInc | kDstInc | kFinInt)); // 16 writes over 960 ns
     f.clock.now = 480;
-    CHECK(f.r(0xC0) == 8);
+    CHECK(f.r(0xC0) == 32);
     CHECK(f.r(0x160) == 0x400 + 4 * 8);
     f.clock.now = 5000;
-    CHECK(f.r(0xC0) == 0);
-    CHECK(f.r(0x160) == 0x400 + 4 * 16);
-    f.run_to_end();
     CHECK(f.r(0xC0) == (0u | 1u << 24));
-    CHECK(f.r(0x160) == 0x400);
+    CHECK(f.r(0x160) == 0x400 + 4 * 16); // kept after the finish
 }
 
 TEST_CASE("gdma counts wrap at 4 bits") {
@@ -397,7 +570,7 @@ TEST_CASE("gdma reset clears channels and flags") {
     f.w(kPrio, 1);
     f.dma.reset();
     CHECK_FALSE(f.line());
-    CHECK(f.r(kStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK(f.r(0x04) == 0);
     CHECK(f.r(0x20 + 0x04) == 0);
     CHECK(f.r(kPrio) == 0);

@@ -13,8 +13,9 @@ constexpr uint32_t kInput = 1u << 0, kOutput = 1u << 1, kOutputDisable = 1u << 3
                    kPullEnable = 1u << 5, kFunctionEnable = 1u << 6;
 constexpr uint32_t kCfgWritable = 0x7E;
 
-constexpr uint32_t kIntEnable = 0x84, kIntLevel0 = 0x88, kIntLevel1 = 0x8C, kIntStatus = 0x90, kExtraIntCfg = 0x98,
-                   kDetect = 0x9C, kIntEnable2 = 0xE0, kIntLevel3 = 0xE4, kIntStatus2 = 0xE8;
+constexpr uint32_t kIntEnable = 0x84, kIntType0To15 = 0x88, kIntType16To31 = 0x8C, kIntStatus = 0x90,
+                   kExtraIntCfg = 0x98, kDetect = 0x9C, kIntEnable32To39 = 0xE0, kIntType32To39 = 0xE4,
+                   kIntStatus32To39 = 0xE8;
 
 constexpr unsigned kLow = 0, kHigh = 1, kRising = 2, kFalling = 3;
 
@@ -69,7 +70,7 @@ uint32_t Gpio::read(const std::string &, uint32_t offset, uint32_t) {
     unsigned pin = pin_at(offset);
     if (pin < kPins) return (word(offset) & kCfgWritable) | (pad_[pin] ? kInput : 0);
     if (offset == kIntStatus) return static_cast<uint32_t>(pending());
-    if (offset == kIntStatus2) return static_cast<uint32_t>(pending() >> 32);
+    if (offset == kIntStatus32To39) return static_cast<uint32_t>(pending() >> 32);
     return word(offset);
 }
 
@@ -81,7 +82,7 @@ void Gpio::write(const std::string &, uint32_t offset, uint32_t, uint32_t value)
     } else if (offset == kIntStatus) {
         latched_ &= ~static_cast<uint64_t>(value);
         settle();
-    } else if (offset == kIntStatus2) {
+    } else if (offset == kIntStatus32To39) {
         latched_ &= ~(static_cast<uint64_t>(value) << 32);
         settle();
     } else if (offset == kDetect) {
@@ -90,8 +91,8 @@ void Gpio::write(const std::string &, uint32_t offset, uint32_t, uint32_t value)
         regs_[offset] = value & 0x33; // the write-1-to-clear status bits have no source
     } else {
         regs_[offset] = value;
-        if (offset == kIntEnable || offset == kIntEnable2 || offset == kIntLevel0 || offset == kIntLevel1 ||
-            offset == kIntLevel3)
+        if (offset == kIntEnable || offset == kIntEnable32To39 || offset == kIntType0To15 || offset == kIntType16To31 ||
+            offset == kIntType32To39)
             settle();
     }
 }
@@ -119,7 +120,7 @@ void Gpio::refresh(unsigned pin) {
 }
 
 bool Gpio::enabled(unsigned pin) const {
-    uint32_t reg = word(pin < 32 ? kIntEnable : kIntEnable2);
+    uint32_t reg = word(pin < 32 ? kIntEnable : kIntEnable32To39);
     return (reg >> (pin < 32 ? pin : pin - 32)) & 1;
 }
 
@@ -127,13 +128,13 @@ unsigned Gpio::mode(unsigned pin) const {
     uint32_t reg;
     unsigned index;
     if (pin < 16) {
-        reg   = word(kIntLevel0);
+        reg   = word(kIntType0To15);
         index = pin;
     } else if (pin < 32) {
-        reg   = word(kIntLevel1);
+        reg   = word(kIntType16To31);
         index = pin - 16;
     } else {
-        reg   = word(kIntLevel3);
+        reg   = word(kIntType32To39);
         index = pin - 32;
     }
     return (reg >> (index * 2)) & 3;

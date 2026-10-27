@@ -20,9 +20,10 @@ executable.
 Images, in `firmware/`:
 `bootloader_v0.1.0-2-g5ae564b-dirty_crc.bin`, `app_crc.bin` (the `ram_loader`
 application), `test_flash_sector_iram.bin` (an IRAM test that erases and
-programs one flash sector), `test_gdma_iram.bin` (an IRAM test of the GDMA
-driver: copies, edge cases and a benchmark that times itself with the MAC's
-microsecond counters).
+programs one flash sector), `test_gdma_iram.bin` (an IRAM test of the GDMA:
+copies, edge cases, address loops, repeat mode, stop and restart, interrupts,
+arbitration and a benchmark that times itself with the MAC's microsecond
+counters; it passes 37 / 37 on the board as well).
 
 | Script | Does | Passes when |
 | ------ | ---- | ----------- |
@@ -31,7 +32,7 @@ microsecond counters).
 | `check3_iram.sh` | `bkloader iram --speed 921600 --port $PORT --capture 6 --until "==END==" test_flash_sector_iram.bin` | `6 / 6 passed` and `==END==` |
 | `check4_flash.sh` | `bkloader flash --port $PORT --speed 921600 app_crc.bin` | `Erased 11 sector(s)`, `Flash CRC32 OK`, `Wrote 42296 bytes to 'app'` |
 | `check5_backup.sh` | `bkloader backup --port $PORT --speed 921600 --segment bootloader --output $OUT` | `$OUT` is 65536 bytes and starts with the loaded bootloader image |
-| `check6_gdma.sh` | `bkloader iram --speed 921600 --port $PORT --capture 120 --until "passed" test_gdma_iram.bin` | `10 / 10 passed` and the benchmark ran |
+| `check6_gdma.sh` | `bkloader iram --speed 921600 --port $PORT --capture 120 --until "==END==" test_gdma_iram.bin` | `37 / 37 passed` and the benchmark ran |
 
 Checks 3 to 6 search bkloader's output with colour codes removed and carriage
 returns turned into line breaks; a run that hits the time limit is reported as
@@ -69,9 +70,9 @@ autoboot countdown, an idle-free busy loop. The countdown length follows the
 CPU clock the bootloader programs: 13,000,000 instructions per tick at 26 MHz
 while the emulator had no system controller, 48,000,000 now (the bootloader
 selects 120 MHz and the profile's `read_adjust` makes the loops see 96 MHz).
-The script names the SDK sources this count comes from and notes the premises
-it cannot check; update `INSNS_PER_TICK` when the profile's `read_adjust` or the
-bootloader changes. No separate busy-loop image is available.
+The script names the custom SDK sources this count comes from and notes the
+premises it cannot check; update `INSNS_PER_TICK` when the profile's
+`read_adjust` or the bootloader changes. No separate busy-loop image is available.
 
 Measure with a Release build. A Debug build (`-O0`, Unicorn included) runs
 about three times slower.
@@ -81,7 +82,7 @@ Measured 2026-10-23, Release build, 5 runs:
 ```
 bootloader countdown: 48000000 instructions per tick, insns_per_us = 100
 note: not checked: the bootloader programs 120 MHz (read as 96 MHz through read_adjust);
-note: not checked: 2 instructions per 4-cycle busy-wait iteration (from the SDK's busy_wait.c)
+note: not checked: 2 instructions per 4-cycle busy-wait iteration (from the custom SDK's busy_wait.c)
 run 1: process start to second tick 714.3 ms, second tick 679.8 ms
 run 2: process start to second tick 702.0 ms, second tick 675.9 ms
 run 3: process start to second tick 702.5 ms, second tick 661.3 ms

@@ -14,7 +14,7 @@ namespace bk {
 namespace {
 
 constexpr uint32_t kBlockRaw = 34, kBlockData = 32, kPage = 4096, kCtrlSize = 0x28;
-constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kSrCnt = 0x14, kConf = 0x1C;
+constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kStatus = 0x14, kConfig = 0x1C;
 constexpr uint32_t kStart = 1u << 29, kWp = 1u << 30, kBusy = 1u << 31;
 constexpr uint32_t kBlockProtect = 0x1C;
 constexpr size_t   kFifoWords    = 8;
@@ -65,14 +65,14 @@ Logger &log() { return Logger::get("flash"); }
 Flash::Flash(std::string name, uint32_t size, uint32_t jedec, Options options)
     : name_(std::move(name)), size_(size), jedec_(jedec), blocks_(size / kBlockRaw),
       window_((blocks_ * kBlockData + kPage - 1) / kPage * kPage), memory_(size, 0xFF), raw_(memory_),
-      verdicts_(blocks_), options_(std::move(options)), words_(options_.words), conf_(options_.conf_reset),
+      verdicts_(blocks_), options_(std::move(options)), words_(options_.words), config_(options_.config_reset),
       m_value_(options_.m_value_reset) {
     if (options_.read_ptr_reset >= kFifoWords)
         throw std::invalid_argument(name_ + ": the read FIFO pointer reset must be 0-7");
     read_ptr_ = options_.read_ptr_reset;
     for (const auto &[offset, value] : options_.words) {
         const bool defined = offset == kOperate || offset == kWriteData || offset == kReadData || offset == kId ||
-                             offset == kSrCnt || offset == kConf;
+                             offset == kStatus || offset == kConfig;
         if (offset % 4 != 0 || offset >= kCtrlSize || defined)
             throw std::invalid_argument(
                 format("%s: controller word at 0x%X is not a plain word of the ctrl range", name_.c_str(), offset));
@@ -98,9 +98,9 @@ void Flash::invalidate_window() {
     if (invalidate) invalidate("xip", 0, window_);
 }
 
-void Flash::set_conf(uint32_t value) {
-    bool changed = ((conf_ ^ value) & kCrcEn) != 0;
-    conf_        = value;
+void Flash::set_config(uint32_t value) {
+    bool changed = ((config_ ^ value) & kCrcEn) != 0;
+    config_      = value;
     if (changed) invalidate_window();
 }
 
@@ -135,8 +135,8 @@ uint32_t Flash::read(const std::string &range, uint32_t offset, uint32_t size) {
             return v;
         }
         case kId: return jedec_;
-        case kSrCnt: return sr_out_ | read_ptr_ << 16 | 7u << 19 | m_value_ << 22;
-        case kConf: return conf_;
+        case kStatus: return sr_out_ | read_ptr_ << 16 | 7u << 19 | m_value_ << 22;
+        case kConfig: return config_;
         default: {
             auto it = words_.find(offset);
             return it == words_.end() ? 0 : it->second;
@@ -155,8 +155,8 @@ void Flash::write(const std::string &range, uint32_t offset, uint32_t, uint32_t 
             write_fifo_.push_back(value);
             if (write_fifo_.size() > kFifoWords) write_fifo_.pop_front();
             break;
-        case kSrCnt: m_value_ = (value >> 22) & 0xFF; break;
-        case kConf: set_conf(value); break;
+        case kStatus: m_value_ = (value >> 22) & 0xFF; break;
+        case kConfig: set_config(value); break;
         default:
             if (auto it = words_.find(offset); it != words_.end()) it->second = value;
             break;
@@ -216,7 +216,7 @@ void Flash::write_command(uint32_t opcode, uint32_t addr, bool wp) {
     if (wel_) log().log(Level::Debug, "write enable consumed by " + std::string(name));
     wel_ = false;
     if (opcode == kWrsr || opcode == kWrsr2) {
-        uint32_t data = (conf_ >> 10) & 0xFFFF;
+        uint32_t data = (config_ >> 10) & 0xFFFF;
         sr_           = data & 0xFC;
         if (opcode == kWrsr2) sr2_ = data >> 8;
         log().log(Level::Debug, format("%s: status 0x%02X, status2 0x%02X", name, sr_, sr2_));
@@ -297,7 +297,7 @@ void Flash::reset() {
     read_fifo_           = {};
     read_ptr_            = options_.read_ptr_reset;
     write_fifo_.clear();
-    set_conf(options_.conf_reset);
+    set_config(options_.config_reset);
 }
 
 void Flash::check_load(uint32_t offset, uint32_t size) const {

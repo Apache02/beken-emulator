@@ -30,12 +30,12 @@ class Flash : public Module {
     // The controller's start state. The defaults are the reset state of the
     // design; a profile can give the state a running chip is measured in.
     struct Options {
-        // Reset value of `conf`.
-        uint32_t conf_reset = kCrcEn;
-        // Reset value of the `m_value` field of `sr_data_crc_cnt`.
+        // Reset value of `config`.
+        uint32_t config_reset = kCrcEn;
+        // Reset value of the `m_value` field of `status`.
         uint32_t m_value_reset = 0;
         // Reset position (0-7) of the read FIFO pointer, the next word a read of
-        // `data_flash_sw` returns and the field [18:16] of `sr_data_crc_cnt`.
+        // `data_flash_sw` returns and the field [18:16] of `status`.
         uint32_t read_ptr_reset = 0;
         // Start values of controller words that have no function in the model
         // (offset -> value): they read back what was written and return to
@@ -84,12 +84,12 @@ class Flash : public Module {
     const MappedFile *mounted() const { return file_.get(); }
 
   private:
-    bool crc_en() const { return (conf_ & kCrcEn) != 0; }
+    bool crc_en() const { return (config_ & kCrcEn) != 0; }
     // Whether XIP block `n` can be read (past the end never; CRC checked if enabled).
     bool readable(uint32_t n);
     bool block_valid(uint32_t n);
     void invalidate_window();
-    void set_conf(uint32_t value);
+    void set_config(uint32_t value);
 
     void run(uint32_t opcode, uint32_t addr, bool wp);
     void write_command(uint32_t opcode, uint32_t addr, bool wp);
@@ -110,7 +110,7 @@ class Flash : public Module {
 
     Options                      options_;
     std::map<uint32_t, uint32_t> words_; // the plain controller words
-    uint32_t                     operate_ = 0, conf_ = kCrcEn, m_value_ = 0;
+    uint32_t                     operate_ = 0, config_ = kCrcEn, m_value_ = 0;
     uint32_t                     sr_ = 0, sr2_ = 0, sr_out_ = 0;
     bool                         wel_ = false;
     std::array<uint32_t, 8>      read_fifo_{};

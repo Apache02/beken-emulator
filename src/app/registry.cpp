@@ -158,7 +158,7 @@ ModuleRegistry builtin_registry() {
     ModuleRegistry r;
     r["flash"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         Flash::Options options;
-        options.conf_reset    = u32_param(ctx, "conf_reset", Flash::kCrcEn);
+        options.config_reset  = u32_param(ctx, "config_reset", Flash::kCrcEn);
         options.m_value_reset = u32_param(ctx, "m_value_reset", 0);
         if (options.m_value_reset > 0xFF) bad(ctx, "m_value_reset must be a byte");
         options.read_ptr_reset = u32_param(ctx, "read_ptr_reset", 0);

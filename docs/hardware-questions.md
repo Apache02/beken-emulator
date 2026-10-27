@@ -9,12 +9,12 @@ been checked.
 
 1. **Last word after the stream is exhausted.** Assumed: `rx_fifo_data` keeps returning
    the last word that was read. With `enc_size` set that word is the size trailer, so
-   after DMA has drained a frame `rx_fifo_data` equals `byte_cnt_pfrm`. The word is not
+   after DMA has drained a frame `rx_fifo_data` equals `byte_cnt_per_frame`. The word is not
    cleared by a new frame or by turning `enc_en` off. Source: recollection of how the
    firmware sees it, not a dedicated measurement.
    Test: for each combination of `enc_size` and `video_byte_rev`, drain one frame with
    the CPU, then read `rx_fifo_data` several more times and compare with
-   `byte_cnt_pfrm`; repeat after turning `enc_en` off and on, and across two frames.
+   `byte_cnt_per_frame`; repeat after turning `enc_en` off and on, and across two frames.
 
 2. **Value before any frame was read.** Assumed: 0 (after reset and after power-up with
    the encoder never enabled). The firmware is expected to discard such words until it
@@ -34,7 +34,7 @@ been checked.
    word is exactly the little-endian size. If the real encoder instead pads the picture
    with zeros to a word boundary and then appends the trailer, the last word differs.
    Test: capture frames with `enc_size` set and look at the last 12 bytes of each frame
-   and the value of `byte_cnt_pfrm`.
+   and the value of `byte_cnt_per_frame`.
 
 ## UART
 

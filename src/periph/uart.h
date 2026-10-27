@@ -54,7 +54,7 @@ class Uart : public Module {
     Line                    irq_;
     ByteEndpoint           *endpoint_ = nullptr;
     std::deque<uint8_t>     fifo_, backlog_;
-    uint32_t                fifo_config_ = 0, irq_enable_ = 0, latched_ = 0;
+    uint32_t                fifo_config_ = 0, int_enable_ = 0, latched_ = 0;
     std::array<uint32_t, 8> words_{};
     uint64_t                last_tick_ = 0;
     std::optional<uint64_t> stop_deadline_;

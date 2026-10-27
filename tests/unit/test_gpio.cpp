@@ -12,8 +12,8 @@ using namespace bk;
 namespace {
 
 constexpr uint32_t kOutput = 1u << 1, kOutputOff = 1u << 3, kPullUp = 1u << 4, kPullEn = 1u << 5, kFunc = 1u << 6;
-constexpr uint32_t kIntEnable = 0x84, kLevel0 = 0x88, kLevel1 = 0x8C, kStatus = 0x90, kExtra = 0x98, kDetect = 0x9C,
-                   kEnable2 = 0xE0, kLevel3 = 0xE4, kStatus2 = 0xE8;
+constexpr uint32_t kIntEnable = 0x84, kType0To15 = 0x88, kType16To31 = 0x8C, kStatus = 0x90, kExtra = 0x98,
+                   kDetect = 0x9C, kEnable32To39 = 0xE0, kType32To39 = 0xE4, kStatus32To39 = 0xE8;
 constexpr unsigned kLow = 0, kHigh = 1, kRising = 2, kFalling = 3;
 
 uint32_t pin_off(unsigned pin) { return pin < 32 ? pin * 4 : 0xC0 + (pin - 32) * 4; }
@@ -31,9 +31,9 @@ struct Fixture {
     void     w(uint32_t off, uint32_t v) { gpio.write("regs", off, 4, v); }
     uint32_t r(uint32_t off) { return gpio.read("regs", off, 4); }
     bool     line() const { return !irq.empty() && irq.back(); }
-    // Sets the mode (0-3) of `pin` in the right level register, keeping the others.
+    // Sets the mode (0-3) of `pin` in the right int_type register, keeping the others.
     void set_mode(unsigned pin, unsigned mode) {
-        uint32_t reg   = pin < 16 ? kLevel0 : pin < 32 ? kLevel1 : kLevel3;
+        uint32_t reg   = pin < 16 ? kType0To15 : pin < 32 ? kType16To31 : kType32To39;
         unsigned index = pin < 16 ? pin : pin < 32 ? pin - 16 : pin - 32;
         w(reg, (r(reg) & ~(3u << index * 2)) | mode << index * 2);
     }
@@ -41,7 +41,7 @@ struct Fixture {
         if (pin < 32)
             w(kIntEnable, r(kIntEnable) | 1u << pin);
         else
-            w(kEnable2, r(kEnable2) | 1u << (pin - 32));
+            w(kEnable32To39, r(kEnable32To39) | 1u << (pin - 32));
     }
 };
 
@@ -212,19 +212,19 @@ TEST_CASE("gpio mode registers: pins 0-15, 16-31 and 32-39") {
     Fixture f;
     f.set_mode(20, kRising);
     f.enable(20);
-    CHECK(f.r(kLevel1) == kRising << 8);
+    CHECK(f.r(kType16To31) == kRising << 8);
     f.gpio.set_input(20, true);
     CHECK(f.line());
     CHECK(f.r(kStatus) == 1u << 20);
 
     f.set_mode(35, kRising);
     f.enable(35);
-    CHECK(f.r(kLevel3) == kRising << 6);
+    CHECK(f.r(kType32To39) == kRising << 6);
     f.gpio.set_input(35, true);
-    CHECK(f.r(kStatus2) == 1u << 3);
+    CHECK(f.r(kStatus32To39) == 1u << 3);
     CHECK(f.r(kStatus) == 1u << 20); // bank 1 does not show up here
-    f.w(kStatus2, 1u << 3);
-    CHECK(f.r(kStatus2) == 0);
+    f.w(kStatus32To39, 1u << 3);
+    CHECK(f.r(kStatus32To39) == 0);
     CHECK(f.r(kStatus) == 1u << 20);
     f.w(kStatus, 1u << 20);
     CHECK_FALSE(f.line());

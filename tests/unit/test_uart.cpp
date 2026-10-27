@@ -26,7 +26,7 @@ struct FakeEndpoint : ByteEndpoint {
     std::string          description() const override { return "fake"; }
 };
 
-constexpr uint32_t kFifoConfig = 0x04, kFifoStatus = 0x08, kData = 0x0C, kIrqEnable = 0x10, kIrqStatus = 0x14;
+constexpr uint32_t kFifoConfig = 0x04, kFifoStatus = 0x08, kData = 0x0C, kIntEnable = 0x10, kIntStatus = 0x14;
 
 struct Fixture {
     FakeClock         clock;
@@ -101,9 +101,9 @@ TEST_CASE("tx without endpoint is dropped") {
     f.uart.attach(nullptr);
     f.w(kData, 0x55);
     CHECK(f.ep.sent.empty());
-    CHECK((f.r(kIrqStatus) & 0x20) == 0); // enable is 0, but latch is internal
-    f.w(kIrqEnable, 0x20);
-    CHECK((f.r(kIrqStatus) & 0x20) == 0x20);
+    CHECK((f.r(kIntStatus) & 0x20) == 0); // enable is 0, but latch is internal
+    f.w(kIntEnable, 0x20);
+    CHECK((f.r(kIntStatus) & 0x20) == 0x20);
 }
 
 TEST_CASE("rx fifo status and pop") {
@@ -125,50 +125,50 @@ TEST_CASE("rx threshold interrupt") {
     Fixture f;
     f.w(kFifoConfig, 3u << 8);
     CHECK(f.r(kFifoConfig) == (3u << 8));
-    f.w(kIrqEnable, 0x02);
+    f.w(kIntEnable, 0x02);
     f.feed(2);
     f.uart.tick(10);
-    CHECK(f.r(kIrqStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK(f.calls.back() == false);
     f.feed(1, 9);
     f.uart.tick(20);
-    CHECK(f.r(kIrqStatus) == 0x02);
+    CHECK(f.r(kIntStatus) == 0x02);
     CHECK(f.calls.back() == true);
     f.r(kData);
-    CHECK(f.r(kIrqStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK(f.calls.back() == false);
 }
 
 TEST_CASE("rx threshold zero needs at least one byte") {
     Fixture f;
-    f.w(kIrqEnable, 0x02);
-    CHECK(f.r(kIrqStatus) == 0);
+    f.w(kIntEnable, 0x02);
+    CHECK(f.r(kIntStatus) == 0);
     f.feed(1);
     f.uart.tick(1);
-    CHECK(f.r(kIrqStatus) == 0x02);
+    CHECK(f.r(kIntStatus) == 0x02);
 }
 
 TEST_CASE("tx_stop_end latched on data write and cleared by write-1") {
     Fixture f;
-    f.w(kIrqEnable, 0x20);
-    CHECK(f.r(kIrqStatus) == 0);
+    f.w(kIntEnable, 0x20);
+    CHECK(f.r(kIntStatus) == 0);
     f.w(kData, 0x41);
-    CHECK(f.r(kIrqStatus) == 0x20);
+    CHECK(f.r(kIntStatus) == 0x20);
     CHECK(f.calls.back() == true);
-    f.w(kIrqStatus, 0x01); // wrong bit: stays
-    CHECK(f.r(kIrqStatus) == 0x20);
-    f.w(kIrqStatus, 0x20);
-    CHECK(f.r(kIrqStatus) == 0);
+    f.w(kIntStatus, 0x01); // wrong bit: stays
+    CHECK(f.r(kIntStatus) == 0x20);
+    f.w(kIntStatus, 0x20);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK(f.calls.back() == false);
 }
 
 TEST_CASE("tx_need_write is always raw") {
     Fixture f;
-    f.w(kIrqEnable, 0x01);
-    CHECK(f.r(kIrqStatus) == 0x01);
+    f.w(kIntEnable, 0x01);
+    CHECK(f.r(kIntStatus) == 0x01);
     CHECK(f.calls.back() == true);
-    f.w(kIrqStatus, 0x01); // not latched: cannot be cleared
-    CHECK(f.r(kIrqStatus) == 0x01);
+    f.w(kIntStatus, 0x01); // not latched: cannot be cleared
+    CHECK(f.r(kIntStatus) == 0x01);
 }
 
 TEST_CASE("fifo depth 128 with backlog") {
@@ -200,13 +200,13 @@ TEST_CASE("fifo backlog bytes arrive in order after pops") {
 
 TEST_CASE("irq line follows raw & enable") {
     Fixture f;
-    f.w(kIrqEnable, 0x20);
+    f.w(kIntEnable, 0x20);
     CHECK(f.calls.back() == false);
     f.w(kData, 1);
     CHECK(f.calls.back() == true);
-    f.w(kIrqEnable, 0);
+    f.w(kIntEnable, 0);
     CHECK(f.calls.back() == false);
-    f.w(kIrqEnable, 0x40);
+    f.w(kIntEnable, 0x40);
     CHECK(f.calls.back() == false);
     f.feed(1);
     f.uart.tick(10);
@@ -214,29 +214,29 @@ TEST_CASE("irq line follows raw & enable") {
     f.clock.now = 10;
     f.uart.tick(1'000'010);
     CHECK(f.calls.back() == true);
-    f.w(kIrqStatus, 0x40);
+    f.w(kIntStatus, 0x40);
     CHECK(f.calls.back() == false);
 }
 
 TEST_CASE("rx_stop_end latches 1 ms after last byte") {
     Fixture f;
-    f.w(kIrqEnable, 0x40);
+    f.w(kIntEnable, 0x40);
     CHECK_FALSE(f.uart.next_event_ns().has_value());
     f.feed(1);
     f.uart.tick(1000);
     CHECK(f.uart.next_event_ns() == std::optional<uint64_t>(1'001'000));
     f.uart.tick(1'000'999);
-    CHECK(f.r(kIrqStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK(f.calls.back() == false);
     f.uart.tick(1'001'000);
-    CHECK(f.r(kIrqStatus) == 0x40);
+    CHECK(f.r(kIntStatus) == 0x40);
     CHECK(f.calls.back() == true);
     CHECK_FALSE(f.uart.next_event_ns().has_value());
     // stays latched until written 1
     f.uart.tick(5'000'000);
-    CHECK(f.r(kIrqStatus) == 0x40);
-    f.w(kIrqStatus, 0x40);
-    CHECK(f.r(kIrqStatus) == 0);
+    CHECK(f.r(kIntStatus) == 0x40);
+    f.w(kIntStatus, 0x40);
+    CHECK(f.r(kIntStatus) == 0);
 }
 
 TEST_CASE("rx_stop_end is re-armed by each move and by pops") {
@@ -262,7 +262,7 @@ TEST_CASE("reset keeps endpoint") {
     f.w(0x1C, 0x1234);
     CHECK(f.r(0x1C) == 0x1234);
     f.w(kFifoConfig, 5u << 8);
-    f.w(kIrqEnable, 0x61);
+    f.w(kIntEnable, 0x61);
     f.w(kData, 1);
     f.feed(300, 0);
     f.uart.tick(50);
@@ -270,8 +270,8 @@ TEST_CASE("reset keeps endpoint") {
     CHECK(f.calls.back() == false);
     CHECK(f.r(0x1C) == 0);
     CHECK(f.r(kFifoConfig) == 0);
-    CHECK(f.r(kIrqEnable) == 0);
-    CHECK(f.r(kIrqStatus) == 0);
+    CHECK(f.r(kIntEnable) == 0);
+    CHECK(f.r(kIntStatus) == 0);
     CHECK(f.r(kFifoStatus) == ((1u << 17) | (1u << 19) | (1u << 20)));
     CHECK_FALSE(f.uart.next_event_ns().has_value());
     f.w(kData, 0x77);

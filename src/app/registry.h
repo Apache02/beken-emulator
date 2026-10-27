@@ -8,8 +8,8 @@ namespace bk {
 // jpeg, saradc, sctrl, timer, trng, uart, unknown, wdt, wifi_mac.
 //
 // Parameters each type reads (anything else is ignored):
-//   flash: size (default 0x200000), jedec_id (default 0x1C7015), conf_reset
-//          (reset value of conf, default crc_en only), m_value_reset (reset
+//   flash: size (default 0x200000), jedec_id (default 0x1C7015), config_reset
+//          (reset value of config, default crc_en only), m_value_reset (reset
 //          value of the m_value field, a byte, default 0), read_ptr_reset (reset
 //          position 0-7 of the read FIFO pointer, default 0), reset_words
 //          (start values of unused ctrl words, as for intc)

@@ -99,7 +99,7 @@ Same sequence as question 7 and 8, with the same outcome:
 | Block | Register | Address | Mask |
 |-------|----------|---------|------|
 | JPEG | `quantization_table[0]` | `0x0080A080` | `0xFFFFFFFF` |
-| GPIO | `intlv1` | `0x0080288C` | `0xFFFFFFFF` |
+| GPIO | `int_type_16_31` | `0x0080288C` | `0xFFFFFFFF` |
 | Timer bank 0 | `counter[2]` | `0x00802A08` | `0xFFFFFFFF` |
 | Timer bank 1 | `counter[2]` | `0x00802A48` | `0xFFFFFFFF` |
 | UART1 | `flow_config` | `0x00802118` | `0x0007FFFF` |
@@ -117,7 +117,7 @@ Not measured:
   behave like plain memory.
 - Unaligned word and halfword accesses with the alignment fault bit **set**: not tried.
 - Unaligned accesses on timer bank 1 and UART2 (the unaligned run covered the JPEG table,
-  GPIO `intlv1`, timer bank 0 and UART1).
+  GPIO `int_type_16_31`, timer bank 0 and UART1).
 - Everything else in the peripheral window (SPI, I2C, SAR ADC, SD, USB, security).
 - JPEG with the block enabled.
 

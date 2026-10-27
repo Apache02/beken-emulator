@@ -4,8 +4,8 @@ An emulator of the Beken BK7252 SoC (ARM968E-S) written in C++20 on top of
 Unicorn. It runs unmodified firmware images: the bootloader and an
 application from flash, plus images loaded to RAM, with the SPI flash, the
 interrupt controller, the watchdog, two timers and two UARTs emulated. The
-UARTs appear on the host as pseudo-terminals, so host tools such as the SDK's
-`bkloader` talk to the emulator as they would to a board.
+UARTs appear on the host as pseudo-terminals, so host tools such as the custom
+SDK's `bkloader` talk to the emulator as they would to a board.
 
 ## Usage
 
@@ -189,8 +189,9 @@ When the firmware puts the chip into deep sleep, the chip powers down until a
 wake-up, and the wake-up (GPIO, RTC) is not emulated: the emulator prints
 `The firmware put the chip into deep sleep; ... stopping.` and exits with
 status 0. Firmware often does this when a battery check reads low; the SAR ADC
-has no analog input, so its profile parameter `sample` stands for the battery
-(3200, about 1.84 V by the SDK's default calibration, reads as healthy).
+has no analog input, so its profile parameter `sample` stands for the battery.
+Its value, 3200, was found by trial: with it the vendor camera firmware (built
+from the vendor SDK) does not go into deep sleep at start.
 
 ### Known limitation: start the host tool after the app banner
 
@@ -209,7 +210,7 @@ ctest --test-dir build                 # unit tests and firmware checks
 BKLOADER=/path/to/bkloader tests/firmware/run_all.sh
 ```
 
-The firmware checks need the images in `firmware/` and the path of the SDK's
-`bkloader` in `BKLOADER`; without the latter the `firmware` test is reported as
-skipped. `tools/measure_speed.sh` reports
+The firmware checks need the images in `firmware/` and the path of the custom
+SDK's `bkloader` in `BKLOADER`; without the latter the `firmware` test is
+reported as skipped. `tools/measure_speed.sh` reports
 emulation speed. Details in `tests/firmware/README.md`.

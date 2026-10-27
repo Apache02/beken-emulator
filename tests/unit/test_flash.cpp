@@ -22,7 +22,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kSrCnt = 0x14, kConf = 0x1C;
+constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kStatus = 0x14, kConfig = 0x1C;
 constexpr uint32_t kCrcEn    = 1u << 26;
 constexpr uint32_t kWindow2M = 0x1E2000; // 61680 blocks * 32, rounded up to 4 KiB
 
@@ -93,10 +93,10 @@ struct Fixture {
     }
     uint32_t rdsr() {
         cmd(RDSR);
-        return r(kSrCnt) & 0xFFFF;
+        return r(kStatus) & 0xFFFF;
     }
     void wrsr(uint32_t op, uint32_t data) {
-        w(kConf, kCrcEn | data << 10);
+        w(kConfig, kCrcEn | data << 10);
         cmd(op);
     }
     std::optional<Fault> xip_fault(uint32_t off, uint32_t size = 4) {
@@ -211,8 +211,8 @@ TEST_CASE("bad crc block is bad span and read faults") {
 TEST_CASE("crc_en clear reads bad block") {
     Fixture f;
     f.flash.load(0, cat(block(0x00), block(0x40, false)));
-    CHECK(f.r(kConf) == kCrcEn);
-    f.w(kConf, 0);
+    CHECK(f.r(kConfig) == kCrcEn);
+    f.w(kConfig, 0);
     CHECK(f.flash.read("xip", 36, 4) == 0x47464544);
     CHECK(f.flash.read("xip", 64, 4) == 0xFFFFFFFF);
     Page p = f.flash.page("xip", 0);
@@ -246,15 +246,15 @@ TEST_CASE("command read 32 bytes via fifo") {
     for (int i = 0; i < 0x50; ++i) d.push_back(static_cast<uint8_t>(i));
     f.flash.load(0, d);
     f.cmd(READ, 0x25); // raw physical address, aligned down to 0x20
-    CHECK(((f.r(kSrCnt) >> 16) & 7) == 0);
+    CHECK(((f.r(kStatus) >> 16) & 7) == 0);
     for (uint32_t i = 0; i < 8; ++i) {
         uint32_t b = 0x20 + 4 * i;
         CHECK(f.r(kReadData) == (b | (b + 1) << 8 | (b + 2) << 16 | (b + 3) << 24));
-        CHECK(((f.r(kSrCnt) >> 16) & 7) == (i + 1) % 8);
+        CHECK(((f.r(kStatus) >> 16) & 7) == (i + 1) % 8);
     }
     CHECK(f.r(kReadData) == 0x23222120); // pointer wrapped
     f.cmd(READ, 0x40);
-    CHECK(((f.r(kSrCnt) >> 16) & 7) == 0);
+    CHECK(((f.r(kStatus) >> 16) & 7) == 0);
     CHECK(f.r(kReadData) == 0x43424140);
     CHECK(f.r(kReadData) == 0x47464544);
     CHECK(f.r(kReadData) == 0x4B4A4948);
@@ -264,20 +264,20 @@ TEST_CASE("command read 32 bytes via fifo") {
 
 TEST_CASE("rdsr and wrsr without wren") {
     Fixture f;
-    CHECK(f.r(kSrCnt) == 7u << 19);
-    f.w(kSrCnt, 0xABu << 22 | 0x3FFFFF);
-    CHECK(f.r(kSrCnt) == (0xABu << 22 | 7u << 19));
-    f.w(kConf, kCrcEn | 0xA5C3u << 10);
-    CHECK(f.r(kConf) == (kCrcEn | 0xA5C3u << 10));
+    CHECK(f.r(kStatus) == 7u << 19);
+    f.w(kStatus, 0xABu << 22 | 0x3FFFFF);
+    CHECK(f.r(kStatus) == (0xABu << 22 | 7u << 19));
+    f.w(kConfig, kCrcEn | 0xA5C3u << 10);
+    CHECK(f.r(kConfig) == (kCrcEn | 0xA5C3u << 10));
     f.cmd(WRSR); // wp set, no WREN
     CHECK(f.rdsr() == 0xC0);
-    CHECK(f.r(kSrCnt) == (0xC0 | 7u << 19 | 0xABu << 22));
+    CHECK(f.r(kStatus) == (0xC0 | 7u << 19 | 0xABu << 22));
     f.cmd(RDSR2);
-    CHECK(f.r(kSrCnt) == (7u << 19 | 0xABu << 22)); // WRSR leaves sr2 alone
+    CHECK(f.r(kStatus) == (7u << 19 | 0xABu << 22)); // WRSR leaves sr2 alone
     f.wrsr(WRSR2, 0x5A43);
     CHECK(f.rdsr() == 0x40);
     f.cmd(RDSR2);
-    CHECK((f.r(kSrCnt) & 0xFFFF) == 0x5A);
+    CHECK((f.r(kStatus) & 0xFFFF) == 0x5A);
 }
 
 TEST_CASE("explicit wren consumed") {
@@ -313,7 +313,7 @@ TEST_CASE("wp not released ignores write") {
     f.w(kWriteData, 0);
     f.cmd(PP, 0x40, false);
     f.cmd(PP, 0x40, false);
-    f.w(kConf, kCrcEn | 0x1Cu << 10);
+    f.w(kConfig, kCrcEn | 0x1Cu << 10);
     f.cmd(WRSR, 0, false);
     f.cmd(WRSR2, 0, false);
     f.cmd(BE1, 0, false);
@@ -406,7 +406,7 @@ TEST_CASE("size not a multiple of 34") {
                        {"xip", 0, 4096}
     });
     CHECK(f.flash.read("xip", 60, 4) == 0x5F5E5D5C);
-    f.w(kConf, 0);
+    f.w(kConfig, 0);
     auto e = f.xip_fault(64);
     REQUIRE(e);
     CHECK(e->addr == 64);
@@ -422,7 +422,7 @@ TEST_CASE("size not a multiple of 34") {
 
 TEST_CASE("xip read past blocks always faults") {
     Fixture f;
-    f.w(kConf, 0);
+    f.w(kConfig, 0);
     CHECK(f.flash.read("xip", 0x1E1DFC, 4) == 0xFFFFFFFF);
     auto e = f.xip_fault(0x1E1E00);
     REQUIRE(e);
@@ -510,7 +510,7 @@ TEST_CASE("bp bits suppress pp and ignore erase, wrsr allowed") {
     f.wrsr(WRSR2, 0x0400); // status write allowed while protected; consumes WEL
     CHECK(f.rdsr() == 0);
     f.cmd(RDSR2);
-    CHECK((f.r(kSrCnt) & 0xFF) == 0x04);
+    CHECK((f.r(kStatus) & 0xFF) == 0x04);
     // Unprotected now: the FIFO word kept by the suppressed PP is programmed.
     f.cmd(PP, 0x2040);
     f.cmd(SE, 0x1000);
@@ -552,15 +552,15 @@ TEST_CASE("erase invalidates xip") {
 
 TEST_CASE("crc_en toggling invalidates the window") {
     Fixture f;
-    f.w(kConf, kCrcEn | 0x55u << 10);
+    f.w(kConfig, kCrcEn | 0x55u << 10);
     CHECK(f.inv.empty());
-    f.w(kConf, 0x55u << 10);
+    f.w(kConfig, 0x55u << 10);
     CHECK(f.inv == std::vector<Call>{
                        {"xip", 0, kWindow2M}
     });
-    f.w(kConf, 0);
+    f.w(kConfig, 0);
     CHECK(f.inv.size() == 1);
-    f.w(kConf, kCrcEn);
+    f.w(kConfig, kCrcEn);
     CHECK(f.inv == std::vector<Call>{
                        {"xip", 0, kWindow2M},
                        {"xip", 0, kWindow2M}
@@ -568,13 +568,13 @@ TEST_CASE("crc_en toggling invalidates the window") {
     f.inv.clear();
     f.flash.reset();
     CHECK(f.inv.empty()); // crc_en unchanged by reset
-    f.w(kConf, 0);
+    f.w(kConfig, 0);
     f.inv.clear();
     f.flash.reset();
     CHECK(f.inv == std::vector<Call>{
                        {"xip", 0, kWindow2M}
     });
-    CHECK(f.r(kConf) == kCrcEn);
+    CHECK(f.r(kConfig) == kCrcEn);
 }
 
 TEST_CASE("reset keeps contents") {
@@ -582,9 +582,9 @@ TEST_CASE("reset keeps contents") {
     f.flash.load(0, cat(block(0x00), block(0x40)));
     f.wrsr(WRSR2, 0x2040);
     f.cmd(WREN);
-    f.w(kSrCnt, 0x12u << 22);
+    f.w(kStatus, 0x12u << 22);
     f.w(kWriteData, 0);
-    f.w(kConf, 0x77u << 10);
+    f.w(kConfig, 0x77u << 10);
     f.cmd(READ, 0);
     CHECK(f.r(kReadData) == 0x03020100);
     std::vector<uint8_t> before = f.flash.raw();
@@ -596,13 +596,13 @@ TEST_CASE("reset keeps contents") {
                        {"xip", 0, kWindow2M}
     });
     CHECK(f.r(kOperate) == 0);
-    CHECK(f.r(kConf) == kCrcEn);
-    CHECK(f.r(kSrCnt) == 7u << 19);
+    CHECK(f.r(kConfig) == kCrcEn);
+    CHECK(f.r(kStatus) == 7u << 19);
     CHECK(f.r(kReadData) == 0); // read FIFO emptied
-    CHECK(((f.r(kSrCnt) >> 16) & 7) == 1);
+    CHECK(((f.r(kStatus) >> 16) & 7) == 1);
     CHECK(f.rdsr() == 0);
     f.cmd(RDSR2);
-    CHECK((f.r(kSrCnt) & 0xFF) == 0);
+    CHECK((f.r(kStatus) & 0xFF) == 0);
     f.cmd(PP, 0x40); // write FIFO emptied: programs all ones
     CHECK(f.flash.raw() == before);
     CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
@@ -614,7 +614,7 @@ namespace {
 // unused non-zero word.
 Flash::Options measured() {
     Flash::Options o;
-    o.conf_reset     = Flash::kCrcEn | 0xF;
+    o.config_reset   = Flash::kCrcEn | 0xF;
     o.m_value_reset  = 0xA0;
     o.read_ptr_reset = 1;
     o.words          = {
@@ -629,18 +629,18 @@ TEST_CASE("controller start state can be given and is what reset returns to") {
     Flash flash("flash", 0x200000, 0x1C7015, measured());
     auto  r = [&](uint32_t off) { return flash.read("ctrl", off, 4); };
     auto  w = [&](uint32_t off, uint32_t v) { flash.write("ctrl", off, 4, v); };
-    CHECK(r(kConf) == 0x0400000F);
-    CHECK(r(kSrCnt) == (0xA0u << 22 | 7u << 19 | 1u << 16));
+    CHECK(r(kConfig) == 0x0400000F);
+    CHECK(r(kStatus) == (0xA0u << 22 | 7u << 19 | 1u << 16));
     CHECK(r(0x20) == 0x01FFFFFF);
     // Everything the firmware may change goes back at reset.
-    w(kConf, kCrcEn);
-    w(kSrCnt, 0x11u << 22);
+    w(kConfig, kCrcEn);
+    w(kStatus, 0x11u << 22);
     w(0x20, 5);
     r(kReadData); // moves the read pointer
     CHECK(r(0x20) == 5);
     flash.reset();
-    CHECK(r(kConf) == 0x0400000F);
-    CHECK(r(kSrCnt) == (0xA0u << 22 | 7u << 19 | 1u << 16));
+    CHECK(r(kConfig) == 0x0400000F);
+    CHECK(r(kStatus) == (0xA0u << 22 | 7u << 19 | 1u << 16));
     CHECK(r(0x20) == 0x01FFFFFF);
 }
 
@@ -653,9 +653,9 @@ TEST_CASE("the read FIFO pointer reset is 0-7 and a read command starts over at 
     Flash::Options o;
     o.read_ptr_reset = 7;
     Flash flash("flash", 0x200000, 0x1C7015, o);
-    CHECK(((flash.read("ctrl", kSrCnt, 4) >> 16) & 7) == 7);
+    CHECK(((flash.read("ctrl", kStatus, 4) >> 16) & 7) == 7);
     flash.write("ctrl", kOperate, 4, 5u << 24 | 1u << 29 | 1u << 30); // READ
-    CHECK(((flash.read("ctrl", kSrCnt, 4) >> 16) & 7) == 0);
+    CHECK(((flash.read("ctrl", kStatus, 4) >> 16) & 7) == 0);
 }
 
 TEST_CASE("controller words that are not given read 0 and ignore writes") {
@@ -668,22 +668,22 @@ TEST_CASE("controller words that are not given read 0 and ignore writes") {
     CHECK(flash.read("ctrl", 0x18, 4) == 0);
     Flash plain("flash");
     CHECK(plain.read("ctrl", 0x20, 4) == 0);
-    CHECK(plain.read("ctrl", kConf, 4) == Flash::kCrcEn);
-    CHECK(plain.read("ctrl", kSrCnt, 4) == 7u << 19);
+    CHECK(plain.read("ctrl", kConfig, 4) == Flash::kCrcEn);
+    CHECK(plain.read("ctrl", kStatus, 4) == 7u << 19);
 }
 
 TEST_CASE("a start state without crc_en reads bad blocks, reset keeps it") {
     Flash::Options o;
-    o.conf_reset = 0;
+    o.config_reset = 0;
     Flash flash("flash", 0x200000, 0x1C7015, o);
     // A block with a wrong CRC reads its data while crc_en is clear.
     std::vector<uint8_t> block(34, 0x11);
     flash.load(0, block);
     CHECK(flash.read("xip", 0, 4) == 0x11111111);
-    flash.write("ctrl", kConf, 4, kCrcEn);
+    flash.write("ctrl", kConfig, 4, kCrcEn);
     CHECK_THROWS_AS(flash.read("xip", 0, 4), Fault);
     flash.reset();
-    CHECK(flash.read("ctrl", kConf, 4) == 0);
+    CHECK(flash.read("ctrl", kConfig, 4) == 0);
     CHECK(flash.read("xip", 0, 4) == 0x11111111);
 }
 

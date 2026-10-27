@@ -13,12 +13,12 @@ namespace bk {
 
 // I2C master that handles one byte at a time, without a FIFO. Every bus phase
 // (the address byte, a data byte) takes nine bit times of the bus clock; when
-// it ends the controller sets `si` and waits until software clears it.
+// it ends the controller sets `int_flag` and waits until software clears it.
 //
-// One deliberate difference from the documented hardware: `sto` is a one-shot
+// One deliberate difference from the documented hardware: `stop` is a one-shot
 // command and reads back 0 once the STOP has been issued. The driver sets it in
 // its working copy of the register and writes that copy back for the rest of
-// the transfer, and a latched `sto` would turn the next transfer's START into a
+// the transfer, and a latched `stop` would turn the next transfer's START into a
 // STOP.
 class I2c1 : public Module {
   public:
@@ -67,7 +67,7 @@ class I2c1 : public Module {
 
     uint32_t             config_ = 0; // the writable fields
     uint32_t             data_   = 0;
-    bool                 ack_rx_ = false, ack_req_ = false, busy_ = false;
+    bool                 rx_ack_ = false, ack_req_ = false, busy_ = false;
     Phase                phase_  = Phase::Idle;
     I2cDevice           *device_ = nullptr;
     std::optional<Event> event_;
