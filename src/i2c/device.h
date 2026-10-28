@@ -36,4 +36,14 @@ class I2cDevice {
     uint8_t address_;
 };
 
+// An I2C master that slaves can be attached to.
+class I2cBus {
+  public:
+    virtual ~I2cBus() = default;
+
+    // Non-owning: the device must outlive the bus. Throws std::invalid_argument
+    // when the address is taken already.
+    virtual void attach(I2cDevice *device) = 0;
+};
+
 } // namespace bk

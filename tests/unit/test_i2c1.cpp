@@ -153,6 +153,27 @@ TEST_CASE("i2c1 a full write transaction") {
     CHECK(f.dev.log == std::vector<std::string>{"begin-write", "write 4", "stop"});
 }
 
+TEST_CASE("i2c1 a driver that writes config back as it read it is not cut short by a stale stop") {
+    Fixture f;
+    f.w(kData, 0x60);
+    f.w(kConfig, kEnable | kStart | kTxMode);
+    f.step();
+    f.w(kConfig, kEnable | kTxMode | kStop);
+    // The STOP has not completed; the next transfer starts on what is read.
+    const uint32_t seen = f.r(kConfig);
+    CHECK((seen & kStop) == 0);
+    f.w(kData, 0x60);
+    f.w(kConfig, seen | kStart | kTxMode);
+    f.step();
+    REQUIRE((f.r(kConfig) & kIntFlag) != 0);
+    // The interrupt handler writes config back with start cleared and sends a byte.
+    f.w(kData, 0x04);
+    f.w(kConfig, f.r(kConfig) & ~kStart & ~kIntFlag);
+    f.step();
+    CHECK(f.dev.log == std::vector<std::string>{"begin-write", "stop", "begin-write", "write 4"});
+    CHECK((f.r(kConfig) & kIntFlag) != 0);
+}
+
 TEST_CASE("i2c1 a nacked address forgets the device and nacks the data") {
     Fixture f;
     f.w(kData, 0x62); // address 0x31: nobody

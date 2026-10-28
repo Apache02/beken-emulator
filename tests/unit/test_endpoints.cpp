@@ -81,6 +81,8 @@ TEST_CASE("pty description is an existing /dev/pts/N") {
     CHECK(std::filesystem::exists(path));
 }
 
+TEST_CASE("none is no endpoint") { CHECK(make_endpoint("none") == nullptr); }
+
 TEST_CASE("pty round trip") {
     auto ep = make_endpoint("pty");
     Fd   slave(open_slave(*ep));

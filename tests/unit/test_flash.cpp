@@ -82,12 +82,12 @@ struct Fixture {
     explicit Fixture(uint32_t size = 0x200000, uint32_t jedec = 0x1C7015) : flash("flash", size, jedec) {
         Logger::reset_for_tests();
         Logger::configure(out, false);
-        flash.invalidate = [this](const std::string &r, uint32_t o, uint32_t s) { inv.emplace_back(r, o, s); };
+        flash.xip_invalidate = [this](uint32_t o, uint32_t s) { inv.emplace_back("xip", o, s); };
     }
     ~Fixture() { Logger::reset_for_tests(); }
 
-    void     w(uint32_t off, uint32_t v) { flash.write("ctrl", off, 4, v); }
-    uint32_t r(uint32_t off) { return flash.read("ctrl", off, 4); }
+    void     w(uint32_t off, uint32_t v) { flash.write("regs", off, 4, v); }
+    uint32_t r(uint32_t off) { return flash.read("regs", off, 4); }
     void     cmd(uint32_t op, uint32_t addr = 0, bool wp = true) {
         w(kOperate, addr | op << 24 | 1u << 29 | (wp ? 1u << 30 : 0));
     }
@@ -101,7 +101,7 @@ struct Fixture {
     }
     std::optional<Fault> xip_fault(uint32_t off, uint32_t size = 4) {
         try {
-            flash.read("xip", off, size);
+            flash.xip_read(off, size);
         } catch (const Fault &f) {
             return f;
         }
@@ -156,21 +156,18 @@ TEST_CASE("load aligns to 34") {
 TEST_CASE("xip decodes data bytes") {
     Fixture f;
     CHECK(f.flash.name() == "flash");
-    REQUIRE(f.flash.ranges().size() == 2);
-    CHECK(f.flash.ranges()[0].name == "xip");
-    CHECK(f.flash.ranges()[0].size == kWindow2M);
-    CHECK(f.flash.ranges()[1].name == "ctrl");
-    CHECK(f.flash.ranges()[1].size == 0x28);
-    REQUIRE(f.flash.demand_ranges().size() == 1);
-    CHECK(f.flash.demand_ranges()[0].name == "xip");
-    CHECK(f.flash.demand_ranges()[0].size == kWindow2M);
+    // The registers are the range of the module, the window is the XIP interface.
+    REQUIRE(f.flash.ranges().size() == 1);
+    CHECK(f.flash.ranges()[0].name == "regs");
+    CHECK(f.flash.ranges()[0].size == 0x28);
+    CHECK(f.flash.xip_size() == kWindow2M);
 
     f.flash.load(0, cat(block(0x00), block(0x40)));
-    CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
-    CHECK(f.flash.read("xip", 0, 4) == 0x03020100);
-    CHECK(f.flash.read("xip", 61, 1) == 0x5D);
-    CHECK(f.flash.read("xip", 62, 2) == 0x5F5E);
-    Page p = f.flash.page("xip", 0);
+    CHECK(f.flash.xip_read(32, 4) == 0x43424140);
+    CHECK(f.flash.xip_read(0, 4) == 0x03020100);
+    CHECK(f.flash.xip_read(61, 1) == 0x5D);
+    CHECK(f.flash.xip_read(62, 2) == 0x5F5E);
+    Page p = f.flash.xip_page(0);
     CHECK(p.data[31] == 0x1F);
     CHECK(p.data[32] == 0x40);
     CHECK(p.data[63] == 0x5F);
@@ -186,7 +183,7 @@ TEST_CASE("xip decodes data bytes") {
 TEST_CASE("bad crc block is bad span and read faults") {
     Fixture f;
     f.flash.load(0, cat(cat(block(0x00), block(0x40, false)), block(0x80)));
-    Page p = f.flash.page("xip", 0);
+    Page p = f.flash.xip_page(0);
     REQUIRE(p.bad.size() == 126);
     CHECK(p.bad[0].start == 32);
     CHECK(p.bad[0].end == 64);
@@ -195,14 +192,14 @@ TEST_CASE("bad crc block is bad span and read faults") {
     for (int i = 32; i < 64; ++i) CHECK(p.data[i] == 0);
     CHECK(p.data[64] == 0x80);
 
-    CHECK(f.flash.read("xip", 64, 4) == 0x83828180);
+    CHECK(f.flash.xip_read(64, 4) == 0x83828180);
     auto e = f.xip_fault(36);
     REQUIRE(e);
     CHECK(e->kind == Fault::Kind::Dabt);
     CHECK(e->addr == 36);
     REQUIRE(f.xip_fault(40));
     REQUIRE(f.xip_fault(32, 1));
-    CHECK(f.flash.read("xip", 0, 4) == 0x03020100);
+    CHECK(f.flash.xip_read(0, 4) == 0x03020100);
     REQUIRE(f.xip_fault(36));
     REQUIRE(f.xip_fault(100));
     REQUIRE(f.xip_fault(44));
@@ -213,9 +210,9 @@ TEST_CASE("crc_en clear reads bad block") {
     f.flash.load(0, cat(block(0x00), block(0x40, false)));
     CHECK(f.r(kConfig) == kCrcEn);
     f.w(kConfig, 0);
-    CHECK(f.flash.read("xip", 36, 4) == 0x47464544);
-    CHECK(f.flash.read("xip", 64, 4) == 0xFFFFFFFF);
-    Page p = f.flash.page("xip", 0);
+    CHECK(f.flash.xip_read(36, 4) == 0x47464544);
+    CHECK(f.flash.xip_read(64, 4) == 0xFFFFFFFF);
+    Page p = f.flash.xip_page(0);
     CHECK(p.bad.empty());
     CHECK(p.data[32] == 0x40);
     CHECK(p.data[64] == 0xFF);
@@ -393,10 +390,35 @@ TEST_CASE("pp clips to the flash size") {
     CHECK(f.rdsr() == 0);
 }
 
+TEST_CASE("the xip window is limited to the first 2 MiB") {
+    // A 4 MiB flash: the window stops at 2 MiB, the rest is read through the registers.
+    Flash big("flash", 0x400000);
+    CHECK(big.xip_size() == 0x200000);
+    // A smaller flash keeps the window of its data.
+    Flash small("flash", 0x200000);
+    CHECK(small.xip_size() == kWindow2M);
+}
+
+TEST_CASE("xip_size sets the window, a multiple of 4096 up to 2 MiB") {
+    Flash::Options o;
+    o.xip_size = 0x100000;
+    Flash flash("flash", 0x200000, 0x1C7015, o);
+    CHECK(flash.xip_size() == 0x100000);
+    // Reads past the data of the flash fail even inside a bigger window.
+    o.xip_size = 0x200000;
+    Flash wide("flash", 0x200000, 0x1C7015, o);
+    CHECK(wide.xip_size() == 0x200000);
+    for (uint32_t bad : {0x100u, 0x1001u, 0x201000u, 0x400000u}) {
+        o.xip_size = bad;
+        CHECK_THROWS_WITH_AS(Flash("flash", 0x200000, 0x1C7015, o),
+                             "flash: xip_size must be a multiple of 4096 up to 0x200000",
+                             std::invalid_argument);
+    }
+}
+
 TEST_CASE("size not a multiple of 34") {
     Fixture f(100); // 2 blocks, 32 trailing bytes
-    CHECK(f.flash.ranges()[0].size == 4096);
-    CHECK(f.flash.demand_ranges()[0].size == 4096);
+    CHECK(f.flash.xip_size() == 4096);
     CHECK_NOTHROW(f.flash.check_load(68, 32));
     CHECK_THROWS_WITH_AS(f.flash.check_load(68, 33),
                          "flash load of 33 bytes at 0x44 does not fit the 100 byte flash",
@@ -405,12 +427,12 @@ TEST_CASE("size not a multiple of 34") {
     CHECK(f.inv == std::vector<Call>{
                        {"xip", 0, 4096}
     });
-    CHECK(f.flash.read("xip", 60, 4) == 0x5F5E5D5C);
+    CHECK(f.flash.xip_read(60, 4) == 0x5F5E5D5C);
     f.w(kConfig, 0);
     auto e = f.xip_fault(64);
     REQUIRE(e);
     CHECK(e->addr == 64);
-    Page p = f.flash.page("xip", 0);
+    Page p = f.flash.xip_page(0);
     REQUIRE(p.bad.size() == 126);
     CHECK(p.bad[0].start == 64);
     CHECK(p.data[64] == 0);
@@ -423,13 +445,13 @@ TEST_CASE("size not a multiple of 34") {
 TEST_CASE("xip read past blocks always faults") {
     Fixture f;
     f.w(kConfig, 0);
-    CHECK(f.flash.read("xip", 0x1E1DFC, 4) == 0xFFFFFFFF);
+    CHECK(f.flash.xip_read(0x1E1DFC, 4) == 0xFFFFFFFF);
     auto e = f.xip_fault(0x1E1E00);
     REQUIRE(e);
     CHECK(e->kind == Fault::Kind::Dabt);
     CHECK(e->addr == 0x1E1E00);
     REQUIRE(f.xip_fault(0x1E1FFC));
-    Page p = f.flash.page("xip", 0x1E1000);
+    Page p = f.flash.xip_page(0x1E1000);
     REQUIRE(p.bad.size() == 16);
     CHECK(p.bad[0].start == 0xE00);
     CHECK(p.bad[0].end == 0xE20);
@@ -442,15 +464,15 @@ TEST_CASE("xip read past blocks always faults") {
 TEST_CASE("load forgets verdicts of whole blocks only") {
     Fixture f;
     f.flash.load(0, cat(block(0x00), block(0x40)));
-    CHECK(f.flash.read("xip", 0, 4) == 0x03020100); // verdict cached: good
-    CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
+    CHECK(f.flash.xip_read(0, 4) == 0x03020100); // verdict cached: good
+    CHECK(f.flash.xip_read(32, 4) == 0x43424140);
     // A partial block keeps its cached verdict although its CRC no longer matches.
     f.flash.load(0, std::vector<uint8_t>(20, 0xEE));
-    CHECK(f.flash.read("xip", 0, 4) == 0xEEEEEEEE);
+    CHECK(f.flash.xip_read(0, 4) == 0xEEEEEEEE);
     // Covering block 1 completely forgets its verdict.
     f.flash.load(34, cat(std::vector<uint8_t>(32, 0x77), {0, 0}));
     CHECK(f.xip_fault(32));
-    CHECK(f.flash.read("xip", 16, 4) == 0xEEEEEEEE);
+    CHECK(f.flash.xip_read(16, 4) == 0xEEEEEEEE);
 }
 
 TEST_CASE("erase sector 4 KiB, block 32/64 KiB, chip") {
@@ -526,7 +548,7 @@ TEST_CASE("erase invalidates xip") {
     Fixture f;
     f.flash.load(121 * 34, block(0x10));
     f.inv.clear();
-    CHECK(f.flash.read("xip", 121 * 32, 4) == 0x13121110); // verdict cached
+    CHECK(f.flash.xip_read(121 * 32, 4) == 0x13121110); // verdict cached
     f.cmd(SE, 0x1000);
     // Raw 0x1000..0x1FFF touches blocks 120..240 -> logical 120*32 .. 241*32.
     CHECK(f.inv == std::vector<Call>{
@@ -605,7 +627,7 @@ TEST_CASE("reset keeps contents") {
     CHECK((f.r(kStatus) & 0xFF) == 0);
     f.cmd(PP, 0x40); // write FIFO emptied: programs all ones
     CHECK(f.flash.raw() == before);
-    CHECK(f.flash.read("xip", 32, 4) == 0x43424140);
+    CHECK(f.flash.xip_read(32, 4) == 0x43424140);
 }
 
 namespace {
@@ -614,11 +636,10 @@ namespace {
 // unused non-zero word.
 Flash::Options measured() {
     Flash::Options o;
-    o.config_reset   = Flash::kCrcEn | 0xF;
-    o.m_value_reset  = 0xA0;
-    o.read_ptr_reset = 1;
-    o.words          = {
-        {0x20, 0x01FFFFFF}
+    o.words = {
+        {0x14, 0xA0u << 22 | 7u << 19 | 1u << 16},
+        {0x1C, Flash::kCrcEn | 0xF              },
+        {0x20, 0x01FFFFFF                       },
     };
     return o;
 }
@@ -627,8 +648,8 @@ Flash::Options measured() {
 
 TEST_CASE("controller start state can be given and is what reset returns to") {
     Flash flash("flash", 0x200000, 0x1C7015, measured());
-    auto  r = [&](uint32_t off) { return flash.read("ctrl", off, 4); };
-    auto  w = [&](uint32_t off, uint32_t v) { flash.write("ctrl", off, 4, v); };
+    auto  r = [&](uint32_t off) { return flash.read("regs", off, 4); };
+    auto  w = [&](uint32_t off, uint32_t v) { flash.write("regs", off, 4, v); };
     CHECK(r(kConfig) == 0x0400000F);
     CHECK(r(kStatus) == (0xA0u << 22 | 7u << 19 | 1u << 16));
     CHECK(r(0x20) == 0x01FFFFFF);
@@ -644,58 +665,57 @@ TEST_CASE("controller start state can be given and is what reset returns to") {
     CHECK(r(0x20) == 0x01FFFFFF);
 }
 
-TEST_CASE("the read FIFO pointer reset is 0-7 and a read command starts over at 0") {
-    for (uint32_t ptr : {8u, 100u}) {
-        Flash::Options o;
-        o.read_ptr_reset = ptr;
-        CHECK_THROWS_AS(Flash("flash", 0x200000, 0x1C7015, o), std::invalid_argument);
-    }
+TEST_CASE("the read FIFO pointer is the field [18:16] of the status start value and a read command starts over at 0") {
     Flash::Options o;
-    o.read_ptr_reset = 7;
+    o.words = {
+        {0x14, 7u << 16}
+    };
     Flash flash("flash", 0x200000, 0x1C7015, o);
-    CHECK(((flash.read("ctrl", kStatus, 4) >> 16) & 7) == 7);
-    flash.write("ctrl", kOperate, 4, 5u << 24 | 1u << 29 | 1u << 30); // READ
-    CHECK(((flash.read("ctrl", kStatus, 4) >> 16) & 7) == 0);
+    CHECK(((flash.read("regs", kStatus, 4) >> 16) & 7) == 7);
+    flash.write("regs", kOperate, 4, 5u << 24 | 1u << 29 | 1u << 30); // READ
+    CHECK(((flash.read("regs", kStatus, 4) >> 16) & 7) == 0);
 }
 
 TEST_CASE("controller words that are not given read 0 and ignore writes") {
     Flash flash("flash", 0x200000, 0x1C7015, measured());
-    flash.write("ctrl", 0x24, 4, 0x1234);
-    flash.write("ctrl", 0x0C, 4, 0x1234);
-    flash.write("ctrl", 0x18, 4, 0x1234);
-    CHECK(flash.read("ctrl", 0x24, 4) == 0);
-    CHECK(flash.read("ctrl", 0x0C, 4) == 0);
-    CHECK(flash.read("ctrl", 0x18, 4) == 0);
+    flash.write("regs", 0x24, 4, 0x1234);
+    flash.write("regs", 0x0C, 4, 0x1234);
+    flash.write("regs", 0x18, 4, 0x1234);
+    CHECK(flash.read("regs", 0x24, 4) == 0);
+    CHECK(flash.read("regs", 0x0C, 4) == 0);
+    CHECK(flash.read("regs", 0x18, 4) == 0);
     Flash plain("flash");
-    CHECK(plain.read("ctrl", 0x20, 4) == 0);
-    CHECK(plain.read("ctrl", kConfig, 4) == Flash::kCrcEn);
-    CHECK(plain.read("ctrl", kStatus, 4) == 7u << 19);
+    CHECK(plain.read("regs", 0x20, 4) == 0);
+    CHECK(plain.read("regs", kConfig, 4) == Flash::kCrcEn);
+    CHECK(plain.read("regs", kStatus, 4) == 7u << 19);
 }
 
 TEST_CASE("a start state without crc_en reads bad blocks, reset keeps it") {
     Flash::Options o;
-    o.config_reset = 0;
+    o.words = {
+        {0x1C, 0}
+    };
     Flash flash("flash", 0x200000, 0x1C7015, o);
     // A block with a wrong CRC reads its data while crc_en is clear.
     std::vector<uint8_t> block(34, 0x11);
     flash.load(0, block);
-    CHECK(flash.read("xip", 0, 4) == 0x11111111);
-    flash.write("ctrl", kConfig, 4, kCrcEn);
-    CHECK_THROWS_AS(flash.read("xip", 0, 4), Fault);
+    CHECK(flash.xip_read(0, 4) == 0x11111111);
+    flash.write("regs", kConfig, 4, kCrcEn);
+    CHECK_THROWS_AS(flash.xip_read(0, 4), Fault);
     flash.reset();
-    CHECK(flash.read("ctrl", kConfig, 4) == 0);
-    CHECK(flash.read("xip", 0, 4) == 0x11111111);
+    CHECK(flash.read("regs", kConfig, 4) == 0);
+    CHECK(flash.xip_read(0, 4) == 0x11111111);
 }
 
-TEST_CASE("controller words must be plain word offsets of the ctrl range") {
-    for (uint32_t offset : {0x00u, 0x04u, 0x08u, 0x10u, 0x14u, 0x1Cu, 0x28u, 0x100u, 0x21u, 0x22u}) {
+TEST_CASE("controller words must be config, status or plain word offsets of the regs range") {
+    for (uint32_t offset : {0x00u, 0x04u, 0x08u, 0x10u, 0x28u, 0x100u, 0x21u, 0x22u}) {
         Flash::Options o;
         o.words = {
             {offset, 1}
         };
         CHECK_THROWS_AS(Flash("flash", 0x200000, 0x1C7015, o), std::invalid_argument);
     }
-    for (uint32_t offset : {0x0Cu, 0x18u, 0x20u, 0x24u}) {
+    for (uint32_t offset : {0x0Cu, 0x14u, 0x18u, 0x1Cu, 0x20u, 0x24u}) {
         Flash::Options o;
         o.words = {
             {offset, 1}
@@ -765,12 +785,12 @@ TEST_CASE("mount of an existing file replaces the contents") {
     file.put(image);
     Fixture f(kSmall);
     f.flash.load(0, block(0x10));
-    CHECK(f.flash.read("xip", 0, 4) == 0x13121110);
+    CHECK(f.flash.xip_read(0, 4) == 0x13121110);
     f.flash.mount(file.path.string());
     CHECK(f.flash.raw() == image);
     CHECK(file.bytes() == image);
     // Cached verdicts are forgotten: block 0 reads the file, block 1 has a bad CRC.
-    CHECK(f.flash.read("xip", 0, 4) == 0x23222120);
+    CHECK(f.flash.xip_read(0, 4) == 0x23222120);
     CHECK(f.xip_fault(32).has_value());
 }
 

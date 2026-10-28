@@ -44,16 +44,18 @@ struct CliOptions {
     std::optional<std::string> pcap;
     // `--wifi-internet`: the virtual router lets the firmware reach the internet (NAT).
     bool wifi_internet = false;
-    bool help          = false; // -h/--help: print usage() and exit; nothing else is set
+    // `--print-config`: print the configuration the emulator would start with and exit.
+    bool print_config = false;
+    bool help         = false; // -h/--help: print usage() and exit; nothing else is set
 };
 
 // PROFILE --load TARGET:FILE [--load ...] [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
 //         [--i2c NAME=TYPE[@ADDRESS]]... [-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]]...
 //         [--ssid NAME | --wifi-ap SSID [--wifi-password PASS] [--wifi-channel N] [--wifi-internet]]
-//         [--pcap FILE] [--flash-mount [NAME=]FILE]...
+//         [--pcap FILE] [--flash-mount [NAME=]FILE]... [--print-config]
 //
 // `--uart1 SPEC` and `--uart2 SPEC` mean `--uart UART1=SPEC` and
-// `--uart UART2=SPEC`; `--i2c1 TYPE[@ADDRESS]` means `--i2c I2C1=TYPE[@ADDRESS]`.
+// `--uart UART2=SPEC`; `--i2c1 TYPE[@ADDRESS]` means `--i2c I2C1=TYPE[@ADDRESS]`, and likewise `--i2c2`.
 // In `--flash-mount`, text before the first `=` is a module name only when it
 // is letters, digits and underscores; otherwise the whole value is the file.
 // Long options also take `--opt=value`. `--log-level` is repeatable; LEVEL is

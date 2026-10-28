@@ -15,7 +15,8 @@
 
 namespace bk {
 
-// The WiFi MAC (core bank 0xC0000000, platform bank 0xC0008000): the registers
+// The WiFi MAC (core bank 0xC0000000, platform bank 0xC0008000, PTA bank
+// 0xC0010000, a stand-in with no behaviour of its own): the registers
 // the firmware uses to run the MAC state machine, its interrupts and timers,
 // and the DMA control command that starts the frame engine. Registers that only store a value are stand-ins
 // (plain memory that logs its accesses, see Unknown); the ones with behaviour
@@ -32,7 +33,7 @@ namespace bk {
 // - time on air (platform 0x160..0x168) and the self-clearing soft reset.
 class WifiMac : public Module {
   public:
-    static constexpr uint32_t kCoreSize = 0x1580, kPlSize = 0x57C;
+    static constexpr uint32_t kCoreSize = 0x1580, kPlSize = 0x57C, kPtaSize = 40;
 
     // Interrupt lines; any of them may be empty.
     struct Lines {
@@ -54,7 +55,8 @@ class WifiMac : public Module {
     std::vector<Range> ranges() const override {
         return {
             {"core", kCoreSize},
-            {"pl",   kPlSize  }
+            {"pl",   kPlSize  },
+            {"pta",  kPtaSize }
         };
     }
     uint32_t read(const std::string &range, uint32_t offset, uint32_t size) override;
@@ -119,7 +121,7 @@ class WifiMac : public Module {
     const Clock            &clock_;
     Signal                  powered_;
     Lines                   lines_;
-    Unknown                 core_, pl_;
+    Unknown                 core_, pl_, pta_;
     std::optional<uint64_t> start_;
     uint64_t                offset_us_  = 0;
     uint32_t                lo_written_ = 0;

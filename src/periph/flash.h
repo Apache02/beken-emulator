@@ -12,6 +12,7 @@
 
 #include "core/mapped_file.h"
 #include "core/module.h"
+#include "core/xip.h"
 
 namespace bk {
 
@@ -20,53 +21,58 @@ namespace bk {
 // The physical store is a sequence of 34-byte blocks: 32 data bytes followed by
 // a big-endian CRC-16 of them. The `xip` range is a decoded view that shows only
 // the data bytes (32 per block); while CRC checking is enabled, blocks whose CRC
-// does not match cannot be read through it. The `ctrl` range is the command
+// does not match cannot be read through it. The `regs` range is the command
 // interface: status registers, a read FIFO, a write FIFO, page program and
 // erases. Every command completes instantly.
-class Flash : public Module {
+class Flash : public Module, public XipMemory {
   public:
     static constexpr uint32_t kCrcEn = 1u << 26;
 
     // The controller's start state. The defaults are the reset state of the
     // design; a profile can give the state a running chip is measured in.
     struct Options {
-        // Reset value of `config`.
-        uint32_t config_reset = kCrcEn;
-        // Reset value of the `m_value` field of `status`.
-        uint32_t m_value_reset = 0;
-        // Reset position (0-7) of the read FIFO pointer, the next word a read of
-        // `data_flash_sw` returns and the field [18:16] of `status`.
-        uint32_t read_ptr_reset = 0;
-        // Start values of controller words that have no function in the model
-        // (offset -> value): they read back what was written and return to
-        // these at reset. Any other unused offset reads 0 and ignores writes.
+        // Start values of controller words (offset -> value), which they return
+        // to at reset. Besides the plain words, which have no function in the
+        // model, read back what was written and read 0 when not given, two
+        // modelled words take one:
+        //  - `config` (0x1C), crc_en set by default;
+        //  - `status` (0x14): the `m_value` field [29:22] and the position
+        //    [18:16] of the read FIFO pointer, the next word a read of
+        //    `data_flash_sw` returns; the other bits are fixed or come from the
+        //    flash, and 0 by default.
         std::map<uint32_t, uint32_t> words;
+        // The size of the XIP window in bytes; firmware does not read the flash
+        // through XIP beyond the first 2 MiB. By default the window covers the
+        // data of every block, up to 2 MiB.
+        std::optional<uint32_t> xip_size;
     };
 
+    static constexpr uint32_t kMaxXipSize = 0x200000;
+
     // Throws std::invalid_argument when `options.words` names an offset that is
-    // not a word-aligned plain offset of the `ctrl` range.
+    // neither `config`, `status` nor a word-aligned plain offset of the `regs`
+    // range, or when `options.xip_size` is not a multiple of 4096 up to 2 MiB.
     Flash(std::string name, uint32_t size, uint32_t jedec, Options options);
     explicit Flash(std::string name, uint32_t size = 0x200000, uint32_t jedec = 0x1C7015)
         : Flash(std::move(name), size, jedec, Options{}) {}
 
     std::string        name() const override { return name_; }
     bool               loadable() const override { return true; }
-    std::vector<Range> demand_ranges() const override {
-        return {
-            {"xip", window_}
-        };
-    }
     std::vector<Range> ranges() const override {
         return {
-            {"xip",  window_},
-            {"ctrl", 0x28   }, // keep in step with kCtrlSize in flash.cpp
+            {"regs", 0x28}  // keep in step with kRegsSize in flash.cpp
         };
     }
 
     uint32_t read(const std::string &range, uint32_t offset, uint32_t size) override;
     void     write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) override;
-    Page     page(const std::string &range, uint32_t page_offset) override;
     void     reset() override;
+
+    // The XIP window: the data bytes of the first blocks, up to 2 MiB, or
+    // `Options::xip_size`.
+    uint32_t xip_size() const override { return window_; }
+    uint32_t xip_read(uint32_t offset, uint32_t size) override;
+    Page     xip_page(uint32_t page_offset) override;
 
     void check_load(uint32_t offset, uint32_t size) const override;
     void load(uint32_t offset, std::span<const uint8_t> data) override;
@@ -82,6 +88,8 @@ class Flash : public Module {
     void mount(const std::string &path);
     // The mounted file, or nullptr.
     const MappedFile *mounted() const { return file_.get(); }
+    // The size of the flash in bytes.
+    uint32_t size() const { return size_; }
 
   private:
     bool crc_en() const { return (config_ & kCrcEn) != 0; }
@@ -90,6 +98,9 @@ class Flash : public Module {
     bool block_valid(uint32_t n);
     void invalidate_window();
     void set_config(uint32_t value);
+    // The start values of `config` and of the fields of `status`, from the options.
+    uint32_t config_reset() const;
+    void     reset_status();
 
     void run(uint32_t opcode, uint32_t addr, bool wp);
     void write_command(uint32_t opcode, uint32_t addr, bool wp);
@@ -114,7 +125,7 @@ class Flash : public Module {
     uint32_t                     sr_ = 0, sr2_ = 0, sr_out_ = 0;
     bool                         wel_ = false;
     std::array<uint32_t, 8>      read_fifo_{};
-    uint32_t                     read_ptr_ = 0; // set from options_ at construction and reset
+    uint32_t                     read_ptr_ = 0; // set from the `status` start value at construction and reset
     std::deque<uint32_t>         write_fifo_;
 };
 

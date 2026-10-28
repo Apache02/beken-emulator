@@ -69,44 +69,36 @@ struct FakeDev : Module {
     }
 };
 
-// Demand-range module: 8 KiB of bytes plus bad spans per page.
-struct FakeRom : Module {
+// A module with an XIP window and no registers: 8 KiB of bytes plus bad spans per page.
+struct FakeRom : Module, XipMemory {
     std::vector<uint8_t>                     mem = std::vector<uint8_t>(0x2000);
     std::map<uint32_t, std::vector<BadSpan>> bad;   // by page offset
-    std::vector<uint32_t>                    pages; // page() calls
-    std::vector<Call>                        calls; // read() calls
+    std::vector<uint32_t>                    pages; // xip_page() calls
+    std::vector<Call>                        calls; // xip_read() calls
 
     FakeRom() {
         for (size_t i = 0; i < mem.size(); ++i) mem[i] = static_cast<uint8_t>(i * 7 + 3);
     }
     std::string        name() const override { return "rom"; }
-    std::vector<Range> demand_ranges() const override {
-        return {
-            {"code", 0x2000}
-        };
-    }
-    std::vector<Range> ranges() const override {
-        return {
-            {"code", 0x2000}
-        };
-    }
-    bool is_bad(uint32_t off, uint32_t size) const {
+    std::vector<Range> ranges() const override { return {}; }
+    uint32_t           xip_size() const override { return 0x2000; }
+    bool               is_bad(uint32_t off, uint32_t size) const {
         auto it = bad.find(off & ~0xFFFu);
         if (it == bad.end()) return false;
         for (const BadSpan &s : it->second)
             if ((off & 0xFFF) < s.end && s.start < (off & 0xFFF) + size) return true;
         return false;
     }
-    uint32_t read(const std::string &r, uint32_t off, uint32_t size) override {
-        calls.emplace_back("read", r, off, size, 0);
+    uint32_t xip_read(uint32_t off, uint32_t size) override {
+        calls.emplace_back("read", "xip", off, size, 0);
         if (is_bad(off, size)) throw Fault{Fault::Kind::Dabt, off};
         uint32_t v = 0;
         for (uint32_t i = 0; i < size; ++i) v |= static_cast<uint32_t>(mem[off + i]) << (8 * i);
         return v;
     }
-    void write(const std::string &, uint32_t, uint32_t, uint32_t) override {}
-    Page page(const std::string &r, uint32_t off) override {
-        REQUIRE(r == "code");
+    uint32_t read(const std::string &, uint32_t, uint32_t) override { return 0; }
+    void     write(const std::string &, uint32_t, uint32_t, uint32_t) override {}
+    Page     xip_page(uint32_t off) override {
         pages.push_back(off);
         Page p{};
         std::copy_n(mem.begin() + off, 4096, p.data.begin());
@@ -143,7 +135,7 @@ struct Fixture {
         });
         bus.claim(rom,
                   {
-                      {"code", kRom}
+                      {"xip", kRom}
         });
         bus.claim_unclaimed(kWin, kWinSize);
         // Vector table: every vector branches to its own parking loop.
@@ -424,7 +416,7 @@ TEST_CASE("overlap rejected") {
                               {"other", 0x00810020   },
                               {"mac",   kRom + 0x1FFF}
               });
-          }) == "dev2.mac overlaps rom.code");
+          }) == "dev2.mac overlaps rom.xip");
     CHECK(message([&] {
               f.bus.claim(dev2,
                           {
@@ -434,8 +426,16 @@ TEST_CASE("overlap rejected") {
           }) == "dev2: no base for range mac");
     // A rejected claim leaves nothing behind.
     CHECK(f.bus.module_ranges().size() == 4);
-    CHECK(static_cast<bool>(f.dev.invalidate));
-    CHECK_FALSE(static_cast<bool>(dev2.invalidate));
+    // The bus hands the XIP module its invalidate hook; a rejected claim does not.
+    CHECK(static_cast<bool>(f.rom.xip_invalidate));
+    FakeRom rom2;
+    CHECK(message([&] {
+              f.bus.claim(rom2,
+                          {
+                              {"xip", kRom + 0x1000}
+              });
+          }) == "rom.xip overlaps rom.xip");
+    CHECK_FALSE(static_cast<bool>(rom2.xip_invalidate));
 }
 
 TEST_CASE("adjacent ranges do not overlap") {
@@ -482,7 +482,7 @@ TEST_CASE("memory regions and module ranges are listed") {
     CHECK(info(ranges[0]) == std::make_tuple(std::string("dev"), std::string("regs"), kRegs, 0x20u));
     CHECK(info(ranges[1]) == std::make_tuple(std::string("dev"), std::string("other"), kOther, 0x10u));
     CHECK(info(ranges[2]) == std::make_tuple(std::string("dev"), std::string("mac"), kMac, 0x100u));
-    CHECK(info(ranges[3]) == std::make_tuple(std::string("rom"), std::string("code"), kRom, 0x2000u));
+    CHECK(info(ranges[3]) == std::make_tuple(std::string("rom"), std::string("xip"), kRom, 0x2000u));
 
     const uint8_t bytes[] = {1, 2, 3, 4};
     f.bus.write_memory(kData + 0xFFFE, std::span<const uint8_t>(bytes, 2));
@@ -507,7 +507,7 @@ TEST_CASE("demand page mapped on first read") {
     // Code runs from a demand page too.
     f.rom.put(0x1800, mov_r0(7));
     f.rom.put(0x1804, b(kRom + 0x1804, kRom + 0x1804));
-    f.rom.invalidate("code", 0x1800, 8);
+    f.rom.xip_invalidate(0x1800, 8);
     f.program({kBxR2});
     f.cpu.set_reg(Reg::R2, kRom + 0x1800);
     CHECK(f.run() == kOk);
@@ -525,7 +525,7 @@ TEST_CASE("demand bad span aborts, pabt for fetch") {
         f.cpu.set_reg(Reg::R2, kRom + 0x11E);
         CHECK(f.run() == kOk);
         CHECK(f.rom.calls == std::vector<Call>{
-                                 {"read", "code", 0x11E, 4, 0}
+                                 {"read", "xip", 0x11E, 4, 0}
         });
         CHECK(f.r(Reg::CPSR) == (kAbt | kI));
         CHECK(f.r(Reg::LR) == 0x108);
@@ -536,7 +536,7 @@ TEST_CASE("demand bad span aborts, pabt for fetch") {
         f.cpu.set_reg(Reg::R2, kRom + 0x104);
         CHECK(f.run() == kOk);
         REQUIRE(f.rom.calls.size() == 1);
-        CHECK(std::get<1>(f.rom.calls[0]) == "code");
+        CHECK(std::get<1>(f.rom.calls[0]) == "xip");
         CHECK(std::get<2>(f.rom.calls[0]) == 0x104);
         CHECK(f.r(Reg::CPSR) == (kAbt | kI));
         CHECK(f.r(Reg::LR) == kRom + 0x108);
@@ -726,7 +726,7 @@ TEST_CASE("bad span adds hooks and requests restart") {
         f.cpu.set_reg(Reg::R4, kRom + 0x5E);
         CHECK(f.run() == kOk);
         CHECK(f.rom.calls == std::vector<Call>{
-                                 {"read", "code", 0x5E, 4, 0}
+                                 {"read", "xip", 0x5E, 4, 0}
         });
         CHECK(f.r(Reg::CPSR) == (kAbt | kI));
         CHECK(f.r(Reg::LR) == kRom + 0xC);
@@ -740,7 +740,7 @@ TEST_CASE("bad span adds hooks and requests restart") {
         CHECK(f.run() == kOk);
         CHECK(f.r(Reg::R1) == f.rom.word(0x20));
         CHECK(f.rom.calls == std::vector<Call>{
-                                 {"read", "code", 0x50, 4, 0}
+                                 {"read", "xip", 0x50, 4, 0}
         });
         CHECK(f.r(Reg::CPSR) == (kAbt | kI));
         CHECK(f.r(Reg::LR) == 0x10C);
@@ -752,7 +752,7 @@ TEST_CASE("bad span adds hooks and requests restart") {
         CHECK(f.r(Reg::CPSR) == (kAbt | kI));
         f.rom.bad.clear();
         f.rom.put(0x40, b(kRom + 0x40, kRom + 0x40));
-        f.rom.invalidate("code", 0x44, 4);
+        f.rom.xip_invalidate(0x44, 4);
         f.rom.calls.clear();
         f.program({kBxR2});
         f.cpu.set_reg(Reg::R2, kRom);
@@ -797,7 +797,7 @@ TEST_CASE("invalidate unmaps pages") {
     f.rom.put(0x10, 0x01020304);
     f.rom.put(0x1010, 0x05060708);
     SUBCASE("only the touched page") {
-        f.rom.invalidate("code", 0x10, 4);
+        f.rom.xip_invalidate(0x10, 4);
         CHECK_FALSE(f.mapped(kRom));
         CHECK(f.mapped(kRom + 0x1000));
         CHECK(run_reads() == kOk);
@@ -806,7 +806,7 @@ TEST_CASE("invalidate unmaps pages") {
         CHECK(f.rom.pages == std::vector<uint32_t>{0, 0x1000, 0});
     }
     SUBCASE("a span crossing a page boundary") {
-        f.rom.invalidate("code", 0xFFF, 2);
+        f.rom.xip_invalidate(0xFFF, 2);
         CHECK_FALSE(f.mapped(kRom));
         CHECK_FALSE(f.mapped(kRom + 0x1000));
         CHECK(run_reads() == kOk);
@@ -824,7 +824,7 @@ TEST_CASE("invalidate shows new flash data") {
     bus.claim(flash,
               {
                   {"xip",  0x00200000},
-                  {"ctrl", 0x00802000}
+                  {"regs", 0x00802000}
     });
     bus.claim_unclaimed(kWin, kWinSize);
 

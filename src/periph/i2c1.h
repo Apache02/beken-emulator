@@ -20,14 +20,14 @@ namespace bk {
 // its working copy of the register and writes that copy back for the rest of
 // the transfer, and a latched `stop` would turn the next transfer's START into a
 // STOP.
-class I2c1 : public Module {
+class I2c1 : public Module, public I2cBus {
   public:
     // `irq` may be empty; `ref_hz` is the clock the bus divider divides.
     I2c1(std::string name, const Clock &clock, Line irq, uint32_t ref_hz);
 
     // Non-owning: the device must outlive this module. Throws
     // std::invalid_argument when the address is taken already.
-    void attach(I2cDevice *device);
+    void attach(I2cDevice *device) override;
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {

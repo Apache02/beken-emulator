@@ -66,6 +66,7 @@ WifiMac::WifiMac(std::string                name,
             instruction,
             bank_log_level),
       pl_(name_ + "_PL", kPlSize, {}, instruction, bank_log_level),
+      pta_(name_ + "_PTA", kPtaSize, {}, instruction, bank_log_level),
       engine_(
           memory,
           [this](std::span<const uint8_t> frame) {
@@ -90,6 +91,7 @@ void WifiMac::reset() {
     engine_.reset();
     core_.reset();
     pl_.reset();
+    pta_.reset();
     start_      = powered_ ? std::nullopt : std::optional<uint64_t>(0);
     offset_us_  = 0;
     lo_written_ = 0;
@@ -412,6 +414,7 @@ void WifiMac::refresh_pl(uint32_t word) {
 }
 
 uint32_t WifiMac::read(const std::string &range, uint32_t offset, uint32_t size) {
+    if (range == "pta") return pta_.read("regs", offset, size);
     const uint32_t word = offset & ~3u;
     if (range == "pl") {
         if (is_tsf(word)) return counter(word);
@@ -424,6 +427,10 @@ uint32_t WifiMac::read(const std::string &range, uint32_t offset, uint32_t size)
 }
 
 void WifiMac::write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) {
+    if (range == "pta") {
+        pta_.write("regs", offset, size, value);
+        return;
+    }
     const uint32_t word = offset & ~3u;
     if (size < 4) value &= (1u << (size * 8)) - 1;
     if (range == "pl" && is_tsf(word)) {

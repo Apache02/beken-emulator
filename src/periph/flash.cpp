@@ -13,7 +13,7 @@ namespace bk {
 
 namespace {
 
-constexpr uint32_t kBlockRaw = 34, kBlockData = 32, kPage = 4096, kCtrlSize = 0x28;
+constexpr uint32_t kBlockRaw = 34, kBlockData = 32, kPage = 4096, kRegsSize = 0x28;
 constexpr uint32_t kOperate = 0x00, kWriteData = 0x04, kReadData = 0x08, kId = 0x10, kStatus = 0x14, kConfig = 0x1C;
 constexpr uint32_t kStart = 1u << 29, kWp = 1u << 30, kBusy = 1u << 31;
 constexpr uint32_t kBlockProtect = 0x1C;
@@ -60,23 +60,42 @@ std::string format(const char *fmt, ...) {
 
 Logger &log() { return Logger::get("flash"); }
 
+// The size of the XIP window of a flash of `blocks` blocks.
+uint32_t xip_window(const std::string &name, uint32_t blocks, std::optional<uint32_t> given) {
+    if (given) {
+        if (*given % kPage != 0 || *given > Flash::kMaxXipSize)
+            throw std::invalid_argument(name + ": xip_size must be a multiple of 4096 up to 0x200000");
+        return *given;
+    }
+    const uint64_t data = (uint64_t{blocks} * kBlockData + kPage - 1) / kPage * kPage;
+    return static_cast<uint32_t>(std::min<uint64_t>(data, Flash::kMaxXipSize));
+}
+
 } // namespace
 
 Flash::Flash(std::string name, uint32_t size, uint32_t jedec, Options options)
     : name_(std::move(name)), size_(size), jedec_(jedec), blocks_(size / kBlockRaw),
-      window_((blocks_ * kBlockData + kPage - 1) / kPage * kPage), memory_(size, 0xFF), raw_(memory_),
-      verdicts_(blocks_), options_(std::move(options)), words_(options_.words), config_(options_.config_reset),
-      m_value_(options_.m_value_reset) {
-    if (options_.read_ptr_reset >= kFifoWords)
-        throw std::invalid_argument(name_ + ": the read FIFO pointer reset must be 0-7");
-    read_ptr_ = options_.read_ptr_reset;
+      window_(xip_window(name_, blocks_, options.xip_size)), memory_(size, 0xFF), raw_(memory_), verdicts_(blocks_),
+      options_(std::move(options)), words_(options_.words), config_(config_reset()) {
+    reset_status();
     for (const auto &[offset, value] : options_.words) {
-        const bool defined = offset == kOperate || offset == kWriteData || offset == kReadData || offset == kId ||
-                             offset == kStatus || offset == kConfig;
-        if (offset % 4 != 0 || offset >= kCtrlSize || defined)
+        const bool defined = offset == kOperate || offset == kWriteData || offset == kReadData || offset == kId;
+        if (offset % 4 != 0 || offset >= kRegsSize || defined)
             throw std::invalid_argument(
-                format("%s: controller word at 0x%X is not a plain word of the ctrl range", name_.c_str(), offset));
+                format("%s: controller word at 0x%X is not a plain word of the regs range", name_.c_str(), offset));
     }
+}
+
+uint32_t Flash::config_reset() const {
+    auto it = options_.words.find(kConfig);
+    return it == options_.words.end() ? kCrcEn : it->second;
+}
+
+void Flash::reset_status() {
+    auto           it    = options_.words.find(kStatus);
+    const uint32_t value = it == options_.words.end() ? 0 : it->second;
+    m_value_             = (value >> 22) & 0xFF;
+    read_ptr_            = (value >> 16) & 7;
 }
 
 bool Flash::block_valid(uint32_t n) {
@@ -95,7 +114,7 @@ bool Flash::readable(uint32_t n) {
 }
 
 void Flash::invalidate_window() {
-    if (invalidate) invalidate("xip", 0, window_);
+    if (xip_invalidate) xip_invalidate(0, window_);
 }
 
 void Flash::set_config(uint32_t value) {
@@ -104,29 +123,30 @@ void Flash::set_config(uint32_t value) {
     if (changed) invalidate_window();
 }
 
-uint32_t Flash::read(const std::string &range, uint32_t offset, uint32_t size) {
-    if (range == "xip") {
-        uint32_t value = 0;
-        for (uint32_t i = 0; i < size; ++i) {
-            uint32_t l = offset + i;
-            uint32_t n = l / kBlockData;
-            if (!readable(n)) {
-                uint64_t physical = static_cast<uint64_t>(n) * kBlockRaw + l % kBlockData;
-                if (last_alert_block_ != n) {
-                    log().log(Level::Error,
-                              format("ALERT: XIP read of an unreadable block (bad CRC or past the end of "
-                                     "flash): logical 0x%08X, block %d, physical 0x%06llX",
-                                     l,
-                                     static_cast<int>(n),
-                                     static_cast<unsigned long long>(physical)));
-                    last_alert_block_ = n;
-                }
-                throw Fault{Fault::Kind::Dabt, l};
+uint32_t Flash::xip_read(uint32_t offset, uint32_t size) {
+    uint32_t value = 0;
+    for (uint32_t i = 0; i < size; ++i) {
+        uint32_t l = offset + i;
+        uint32_t n = l / kBlockData;
+        if (!readable(n)) {
+            uint64_t physical = static_cast<uint64_t>(n) * kBlockRaw + l % kBlockData;
+            if (last_alert_block_ != n) {
+                log().log(Level::Error,
+                          format("ALERT: XIP read of an unreadable block (bad CRC or past the end of "
+                                 "flash): logical 0x%08X, block %d, physical 0x%06llX",
+                                 l,
+                                 static_cast<int>(n),
+                                 static_cast<unsigned long long>(physical)));
+                last_alert_block_ = n;
             }
-            value |= static_cast<uint32_t>(raw_[static_cast<size_t>(n) * kBlockRaw + l % kBlockData]) << (8 * i);
+            throw Fault{Fault::Kind::Dabt, l};
         }
-        return value;
+        value |= static_cast<uint32_t>(raw_[static_cast<size_t>(n) * kBlockRaw + l % kBlockData]) << (8 * i);
     }
+    return value;
+}
+
+uint32_t Flash::read(const std::string &, uint32_t offset, uint32_t) {
     switch (offset) {
         case kOperate: return operate_ & ~(kBusy | kStart);
         case kReadData: {
@@ -145,7 +165,7 @@ uint32_t Flash::read(const std::string &range, uint32_t offset, uint32_t size) {
 }
 
 void Flash::write(const std::string &range, uint32_t offset, uint32_t, uint32_t value) {
-    if (range != "ctrl") return;
+    if (range != "regs") return;
     switch (offset) {
         case kOperate:
             operate_ = value;
@@ -271,11 +291,10 @@ void Flash::touched(uint32_t start, uint32_t end) {
     for (uint32_t n = first; n <= last && n < blocks_; ++n) verdicts_[n].reset();
     uint64_t lo = static_cast<uint64_t>(first) * kBlockData;
     uint64_t hi = std::min<uint64_t>(static_cast<uint64_t>(last + 1) * kBlockData, window_);
-    if (invalidate && lo < hi) invalidate("xip", static_cast<uint32_t>(lo), static_cast<uint32_t>(hi - lo));
+    if (xip_invalidate && lo < hi) xip_invalidate(static_cast<uint32_t>(lo), static_cast<uint32_t>(hi - lo));
 }
 
-Page Flash::page(const std::string &range, uint32_t page_offset) {
-    if (range != "xip") return Module::page(range, page_offset);
+Page Flash::xip_page(uint32_t page_offset) {
     Page p{};
     for (uint32_t pos = 0; pos < kPage; pos += kBlockData) {
         uint32_t n = (page_offset + pos) / kBlockData;
@@ -290,14 +309,13 @@ Page Flash::page(const std::string &range, uint32_t page_offset) {
 
 void Flash::reset() {
     operate_ = 0;
-    m_value_ = options_.m_value_reset;
     words_   = options_.words;
     sr_ = sr2_ = sr_out_ = 0;
     wel_                 = false;
     read_fifo_           = {};
-    read_ptr_            = options_.read_ptr_reset;
+    reset_status();
     write_fifo_.clear();
-    set_config(options_.config_reset);
+    set_config(config_reset());
 }
 
 void Flash::check_load(uint32_t offset, uint32_t size) const {

@@ -13,6 +13,7 @@
 #include "periph/gdma.h"
 #include "periph/gpio.h"
 #include "periph/i2c1.h"
+#include "periph/i2c2.h"
 #include "periph/default_picture.h"
 #include "periph/intc.h"
 #include "periph/jpeg.h"
@@ -158,12 +159,8 @@ ModuleRegistry builtin_registry() {
     ModuleRegistry r;
     r["flash"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         Flash::Options options;
-        options.config_reset  = u32_param(ctx, "config_reset", Flash::kCrcEn);
-        options.m_value_reset = u32_param(ctx, "m_value_reset", 0);
-        if (options.m_value_reset > 0xFF) bad(ctx, "m_value_reset must be a byte");
-        options.read_ptr_reset = u32_param(ctx, "read_ptr_reset", 0);
-        if (options.read_ptr_reset > 7) bad(ctx, "read_ptr_reset must be 0-7");
         options.words = reset_words(ctx);
+        if (ctx.params.find("xip_size")) options.xip_size = u32_param(ctx, "xip_size", 0);
         return std::make_unique<Flash>(
             ctx.name, u32_param(ctx, "size", 0x200000), u32_param(ctx, "jedec_id", 0x1C7015), std::move(options));
     };
@@ -181,6 +178,11 @@ ModuleRegistry builtin_registry() {
         if (ref_hz == 0) bad(ctx, "ref_hz must not be 0");
         return std::make_unique<I2c1>(ctx.name, ctx.clock, ctx.irq, ref_hz);
     };
+    r["i2c2"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t ref_hz = u32_param(ctx, "ref_hz", 26000000);
+        if (ref_hz == 0) bad(ctx, "ref_hz must not be 0");
+        return std::make_unique<I2c2>(ctx.name, ctx.clock, ctx.irq, ref_hz);
+    };
     r["intc"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Intc>(ctx.name, ctx.cpu_irq, ctx.cpu_fiq, reset_words(ctx), signal_specs(ctx));
     };
@@ -196,9 +198,10 @@ ModuleRegistry builtin_registry() {
                                       ctx.clock,
                                       ctx.irq,
                                       ctx.dma,
-                                      u32_param(ctx, "frame_interval_ms", 1000),
-                                      u32_param(ctx, "encode_ms", 150),
-                                      std::move(picture));
+                                      u32_param(ctx, "frame_interval_ms", 62),
+                                      u32_param(ctx, "encode_ms", 50),
+                                      std::move(picture),
+                                      u32_param(ctx, "burst_words", 64));
     };
     r["saradc"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Saradc>(ctx.name, ctx.irq, u32_param(ctx, "sample", 330));

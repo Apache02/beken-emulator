@@ -46,14 +46,13 @@ type = "flash"
 name = "FLASH"
 [module.bases]
 xip = 0x00000000
-ctrl = 0x00803000
+regs = 0x00803000
 [module.params]
 size = 0x200000
 # The controller as the vendor ROM leaves it at bootloader entry (measured).
-config_reset = 0x0400000f     # config: crc_en and clk_conf = 15
-m_value_reset = 0xa0          # the quad-mode M byte
-read_ptr_reset = 1            # the ROM has read from the FIFO: pointer at 1
 [module.params.reset_words]
+"0x14" = 0x28390000           # status: the quad-mode M byte 0xa0, the read FIFO pointer at 1
+"0x1c" = 0x0400000f           # config: crc_en and clk_conf = 15
 "0x20" = 0x01ffffff           # an unused word that reads non-zero on the chip
 
 [[module]]
@@ -127,6 +126,7 @@ name = "MDM_STAT"
 regs = 0x01000000
 [module.params]
 size = 108
+log_level = "debug"
 
 [[module]]
 type = "unknown"
@@ -135,6 +135,7 @@ name = "MDM_CFG"
 regs = 0x01000800
 [module.params]
 size = 152
+log_level = "debug"
 
 [[module]]
 type = "unknown"
@@ -143,6 +144,7 @@ name = "AGC"
 regs = 0x01002000
 [module.params]
 size = 176
+log_level = "debug"
 
 [[module]]
 type = "unknown"
@@ -169,6 +171,7 @@ name = "AUDIO"
 regs = 0x00802B00
 [module.params]
 size = 192
+log_level = "debug"
 [module.params.reset_words]
 "0x38" = 0x0000f000
 "0x3C" = 0x00001836
@@ -220,6 +223,7 @@ name = "RC"
 regs = 0x01050000
 [module.params]
 size = 480
+log_level = "debug"
 
 [[module]]
 type = "unknown"
@@ -228,6 +232,7 @@ name = "NX_INTC"
 regs = 0x10910000
 [module.params]
 size = 68
+log_level = "debug"
 
 [[module]]
 type = "unknown"
@@ -236,6 +241,7 @@ name = "NX_DMA"
 regs = 0x10A00000
 [module.params]
 size = 196
+log_level = "debug"
 
 [[module]]
 type = "unknown"
@@ -244,6 +250,7 @@ name = "LA"
 regs = 0x10E00000
 [module.params]
 size = 64
+log_level = "debug"
 
 # The counters, state machine, interrupts and timers are emulated; the rest of
 # the MAC registers are stand-ins. The counters run while SCTRL's MAC power key
@@ -255,20 +262,12 @@ name = "MAC"
 [module.bases]
 core = 0xC0000000
 pl = 0xC0008000
+pta = 0xC0010000
 [module.params]
 log_level = "debug"
 mac_powered_signal = "SCTRL.mac_powered"
 intc = "ICU"
 irq = { tx_rx_timer = 17, tx_rx_misc = 18, rx_trigger = 19, tx_trigger = 20, prot_trigger = 21, general = 22 }
-
-[[module]]
-type = "unknown"
-name = "MAC_PTA"
-[module.bases]
-regs = 0xC0010000
-[module.params]
-size = 40
-log_level = "debug"
 
 # bus_hz: the clock the transfer times were measured at.
 [[module]]
@@ -282,7 +281,8 @@ irq = 15
 bus_hz = 120000000
 
 # No sensor: a built-in picture is "captured" every frame_interval_ms and its
-# frame ends encode_ms later. The interrupt is FIQ source 29; dma_request 8 is
+# frame ends encode_ms later; its words reach the FIFO burst_words at a time,
+# evenly over that time, as a sensor would deliver them. The interrupt is FIQ source 29; dma_request 8 is
 # the GDMA's JPEG line.
 [[module]]
 type = "jpeg"
@@ -294,8 +294,9 @@ intc = "ICU"
 irq = 29
 dma = "GDMA"
 dma_request = 8
-frame_interval_ms = 1000
-encode_ms = 150
+frame_interval_ms = 62
+encode_ms = 50
+burst_words = 64
 
 # Pin words read 0x28 at reset (output driver off, pull-down); GPIO 20-23 also
 # have function_enable set by the vendor ROM.
@@ -329,6 +330,16 @@ irq = 2
 ref_hz = 26000000
 
 # Not random: data reads count 0, 1, 2, ... and the generator starts enabled.
+[[module]]
+type = "i2c2"
+name = "I2C2"
+[module.bases]
+regs = 0x00802600
+[module.params]
+intc = "ICU"
+irq = 5
+ref_hz = 26000000
+
 [[module]]
 type = "trng"
 name = "TRNG"

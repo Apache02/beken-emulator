@@ -204,14 +204,62 @@ Profile build(const toml::table &root) {
     return p;
 }
 
-} // namespace
+// Puts a copy of `value` in `table` under `key`.
+void put(toml::table &table, std::string_view key, const toml::node &value) {
+    value.visit([&](const auto &v) { table.insert_or_assign(key, v); });
+}
 
-Profile load_profile(const std::string &name, const std::filesystem::path &dir) {
+// Merges `over` into `base` key by key; tables on both sides merge in turn.
+void merge_table(toml::table &base, const toml::table &over) {
+    for (const auto &[key, value] : over) {
+        toml::node *there = base.get(key);
+        if (there && there->is_table() && value.is_table())
+            merge_table(*there->as_table(), *value.as_table());
+        else
+            put(base, key.str(), value);
+    }
+}
+
+// Merges the array of tables `key` of `over` into that of `base`: an entry is
+// merged into the one of the same name, a new name is added at the end.
+void merge_named(toml::table &base, const toml::table &over, const std::string &key) {
+    const toml::array *entries = over.get_as<toml::array>(key);
+    if (!entries) return;
+    toml::array *there = base.get_as<toml::array>(key);
+    if (!there) {
+        base.insert_or_assign(key, toml::array{});
+        there = base.get_as<toml::array>(key);
+    }
+    for (const toml::node &node : *entries) {
+        const toml::table *entry = node.as_table();
+        if (!entry) throw Bad{key + " must be an array of tables"};
+        const std::string name = Fields{*entry, key}.string("name");
+        toml::table      *same = nullptr;
+        for (toml::node &candidate : *there) {
+            toml::table *t = candidate.as_table();
+            if (t && t->get("name") && t->get("name")->is_string() && t->get("name")->as_string()->get() == name)
+                same = t;
+        }
+        if (same)
+            merge_table(*same, *entry);
+        else
+            there->push_back(*entry);
+    }
+}
+
+// The name of a profile that is safe to turn into a file name.
+void check_name(const std::string &name) {
     if (name.empty() || name != upper(name)) throw ProfileError("profile name must be upper case");
     for (char c : name) {
         if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-'))
             throw ProfileError("profile name must contain only A-Z, 0-9, '_' and '-': " + name);
     }
+}
+
+// The tree of `<dir>/<name>.toml` with `extends` resolved. `chain` holds the
+// profiles being read, to catch a cycle.
+toml::table read_tree(const std::string &name, const std::filesystem::path &dir, std::vector<std::string> &chain) {
+    check_name(name);
     std::filesystem::path file = dir / (name + ".toml");
     std::error_code       ec;
     if (!std::filesystem::is_regular_file(file, ec)) {
@@ -226,13 +274,47 @@ Profile load_profile(const std::string &name, const std::filesystem::path &dir) 
     }
     const std::string prefix = file.string() + ": bad profile: ";
     try {
-        toml::table root = toml::parse_file(file.string());
-        return build(root);
+        toml::table       root    = toml::parse_file(file.string());
+        const toml::node *extends = root.get("extends");
+        if (!extends) return root;
+        if (!extends->is_string()) throw Bad{"extends must be a profile name"};
+        const std::string base_name = extends->as_string()->get();
+        if (std::find(chain.begin(), chain.end(), base_name) != chain.end())
+            throw Bad{"extends makes a cycle through " + base_name};
+        chain.push_back(base_name);
+        toml::table merged = read_tree(base_name, dir, chain);
+        chain.pop_back();
+        // The profile is called what its file is, unless it says otherwise.
+        const bool named = root.get("name") != nullptr;
+        for (const auto &[key, value] : root) {
+            const std::string k(key.str());
+            if (k == "extends" || k == "memory" || k == "module") continue;
+            if (k == "alias" && value.is_table() && merged.get("alias") && merged.get("alias")->is_table())
+                merge_table(*merged.get("alias")->as_table(), *value.as_table());
+            else
+                put(merged, key.str(), value);
+        }
+        merge_named(merged, root, "memory");
+        merge_named(merged, root, "module");
+        if (!named) merged.insert_or_assign("name", name);
+        return merged;
     } catch (const toml::parse_error &e) {
         throw ProfileError(prefix + std::string(e.description()) + " (line " + std::to_string(e.source().begin.line) +
                            ", column " + std::to_string(e.source().begin.column) + ")");
     } catch (const Bad &b) {
         throw ProfileError(prefix + b.detail);
+    }
+}
+
+} // namespace
+
+Profile load_profile(const std::string &name, const std::filesystem::path &dir) {
+    std::vector<std::string> chain{name};
+    toml::table              root = read_tree(name, dir, chain);
+    try {
+        return build(root);
+    } catch (const Bad &b) {
+        throw ProfileError((dir / (name + ".toml")).string() + ": bad profile: " + b.detail);
     }
 }
 

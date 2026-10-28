@@ -68,7 +68,7 @@ type = "flash"
 name = "FLASH"
 [module.bases]
 xip = 0x00000000
-ctrl = 0x00803000
+regs = 0x00803000
 [module.params]
 size = 0x1000
 )";
@@ -99,7 +99,7 @@ Profile load_chip() {
     };
     p.alias["RAM"] = {uint32_t{kRam}};
     p.modules      = {
-        {"flash", "FLASH", {{"xip", 0}, {"ctrl", 0x00803000}}, {{"size", 0x1000}}},
+        {"flash", "FLASH", {{"xip", 0}, {"regs", 0x00803000}}, {{"size", 0x1000}}},
         {"intc",  "ICU",   {{"regs", kIcu}},                   {}                }
     };
     return p;
@@ -145,11 +145,11 @@ const std::vector<std::pair<const char *, const char *>> kShippedModules = {
     {"NX_DMA",   "unknown" },
     {"LA",       "unknown" },
     {"MAC",      "wifi_mac"},
-    {"MAC_PTA",  "unknown" },
     {"GDMA",     "gdma"    },
     {"JPEG",     "jpeg"    },
     {"GPIO",     "gpio"    },
     {"I2C1",     "i2c1"    },
+    {"I2C2",     "i2c2"    },
     {"TRNG",     "trng"    },
     {"TIMER0",   "timer"   },
     {"TIMER1",   "timer"   },
@@ -202,7 +202,7 @@ TEST_CASE("profile parses minimal bk7252") {
     };
     CHECK(spec("FLASH").bases == std::map<std::string, uint32_t>{
                                      {"xip",  0         },
-                                     {"ctrl", 0x00803000}
+                                     {"regs", 0x00803000}
     });
     CHECK(spec("SCTRL").bases.at("regs") == 0x00800000);
     CHECK(spec("ICU").bases.at("regs") == 0x00802000);
@@ -264,9 +264,9 @@ TEST_CASE("shipped profile builds a machine") {
 
     // FLASH: the controller as the vendor ROM leaves it at bootloader entry.
     Module *flash = m.module("FLASH");
-    CHECK(flash->read("ctrl", 0x1C, 4) == 0x0400000F);
-    CHECK(flash->read("ctrl", 0x14, 4) == 0x28390000); // m_value 0xa0, constant 7, read pointer 1
-    CHECK(flash->read("ctrl", 0x20, 4) == 0x01FFFFFF);
+    CHECK(flash->read("regs", 0x1C, 4) == 0x0400000F);
+    CHECK(flash->read("regs", 0x14, 4) == 0x28390000); // m_value 0xa0, constant 7, read pointer 1
+    CHECK(flash->read("regs", 0x20, 4) == 0x01FFFFFF);
 
     // SCTRL: identity, measured power-on words, the biased clock divider.
     Module *sctrl = m.module("SCTRL");
@@ -362,6 +362,109 @@ TEST_CASE("profile names are restricted to A-Z, 0-9, underscore and dash") {
     CHECK_THROWS_WITH_AS(load_profile("bk7252", dir.path), "profile name must be upper case", ProfileError);
     CHECK_NOTHROW(load_profile("BK7252", dir.path));
     CHECK_NOTHROW(load_profile("MY_BOARD-2", dir.path));
+}
+
+TEST_CASE("a profile extends another: keys replace, tables and named entries merge") {
+    TempDir dir;
+    dir.write("SMALL.toml", std::string(kSmallProfile) + R"(
+[[module]]
+type = "sctrl"
+name = "SCTRL"
+[module.bases]
+regs = 0x00800000
+[module.params]
+size = 8
+log_level = "info"
+)");
+    dir.write("CHILD.toml", R"(
+extends = "SMALL"
+insns_per_us = 70
+
+[[memory]]
+name = "RAM"
+size = 0x2000
+[[memory]]
+name = "RAM2"
+base = 0x00500000
+size = 0x1000
+
+[alias]
+second = 0x00500000
+
+[[module]]
+name = "SCTRL"
+[module.params]
+log_level = "debug"
+[[module]]
+type = "sctrl"
+name = "SCTRL2"
+[module.bases]
+regs = 0x00801000
+)");
+    Profile p = load_profile("CHILD", dir.path);
+    // The file gives the name, the keys of the child replace those of the base.
+    CHECK(p.name == "CHILD");
+    CHECK(p.insns_per_us == 70);
+    CHECK(p.win_size == 0x00100000);
+    // An entry of the same name changes, a new one is added at the end.
+    REQUIRE(p.memory.size() == 2);
+    CHECK(p.memory[0].name == "RAM");
+    CHECK(p.memory[0].base == 0x00400000);
+    CHECK(p.memory[0].size == 0x2000);
+    CHECK(p.memory[1].name == "RAM2");
+    // The module of the small profile is first, then SCTRL, then the new one.
+    REQUIRE(p.modules.size() == 3);
+    CHECK(p.modules[1].name == "SCTRL");
+    CHECK(p.modules[1].bases.at("regs") == 0x00800000);
+    CHECK(*p.modules[1].params.find("size")->integer() == 8);
+    CHECK(*p.modules[1].params.find("log_level")->string() == "debug");
+    CHECK(p.modules[2].name == "SCTRL2");
+    // The aliases of both are there.
+    CHECK(p.alias.count("RAM") == 1);
+    CHECK(p.alias.count("SECOND") == 1);
+}
+
+TEST_CASE("a profile may say its own name and extend through several levels") {
+    TempDir dir;
+    dir.write("A.toml", kSmallProfile);
+    dir.write("B.toml", "extends = \"A\"\ninsns_per_us = 60\n");
+    dir.write("C.toml", "extends = \"B\"\nname = \"CALLED\"\n");
+    Profile p = load_profile("C", dir.path);
+    CHECK(p.name == "CALLED");
+    CHECK(p.insns_per_us == 60);
+    CHECK(load_profile("B", dir.path).name == "B");
+}
+
+TEST_CASE("extends needs a profile that exists and no cycle") {
+    TempDir dir;
+    dir.write("A.toml", "extends = \"B\"\n");
+    dir.write("B.toml", "extends = \"A\"\n");
+    CHECK_THROWS_WITH_AS(
+        load_profile("A", dir.path), doctest::Contains("extends makes a cycle through A"), ProfileError);
+    dir.write("C.toml", "extends = \"NOWHERE\"\n");
+    CHECK_THROWS_WITH_AS(load_profile("C", dir.path), doctest::Contains("no profile NOWHERE"), ProfileError);
+    dir.write("D.toml", "extends = 3\n");
+    CHECK_THROWS_WITH_AS(
+        load_profile("D", dir.path), doctest::Contains("extends must be a profile name"), ProfileError);
+}
+
+TEST_CASE("BK7252_4M is BK7252 with a 4 MiB flash") {
+    Profile base = load_profile("BK7252", BK_PROFILES_DIR);
+    Profile big  = load_profile("BK7252_4M", BK_PROFILES_DIR);
+    CHECK(big.name == "BK7252_4M");
+    CHECK(big.modules.size() == base.modules.size());
+    CHECK(big.memory.size() == base.memory.size());
+    Machine machine(big, builtin_registry());
+    auto   *flash = dynamic_cast<Flash *>(machine.module("FLASH"));
+    REQUIRE(flash);
+    CHECK(flash->size() == 0x400000);
+    CHECK(flash->read("regs", 0x10, 4) == 0x000B4016);
+    // The registers keep their reset state, the window stays 2 MiB.
+    CHECK(flash->read("regs", 0x1C, 4) == 0x0400000F);
+    CHECK(flash->xip_size() == 0x200000);
+    // The 2 MiB profile is untouched.
+    Machine small(base, builtin_registry());
+    CHECK(dynamic_cast<Flash *>(small.module("FLASH"))->size() == 0x200000);
 }
 
 TEST_CASE("lower case name rejected") {

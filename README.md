@@ -47,7 +47,9 @@ over the network, on port 2323. Ctrl-C stops the emulator.
 
 `BK7252` names the profile `profiles/BK7252.toml`, found next to the
 executable (`<exe>/../profiles`) or in the directory named by
-`BKEMU_PROFILES`. `--load TARGET:FILE` places an image: `bootloader` (flash
+`BKEMU_PROFILES`. `BK7252_4M` is the same chip with a 4 MiB flash; a profile
+takes another as its base with `extends = "BK7252"` and lists only what it
+changes (see `profiles/BK7252_4M.toml`). `--load TARGET:FILE` places an image: `bootloader` (flash
 offset 0) and `app` (flash offset 0x11000) take CRC-protected `_crc.bin`
 images; `RAM`, `IRAM` and plain addresses are also accepted. On start the
 emulator prints where its UARTs are connected:
@@ -63,12 +65,29 @@ module `NAME` of the profile to the emulator's own standard input and output
 instead (`--uart1 stdio` and `--uart2 stdio` are shorthands for `UART1` and
 `UART2`; the terminal is put in raw mode, and Ctrl-C stops the emulator instead of
 reaching the firmware); `--uart NAME=/dev/ttyUSB0` connects it to a real serial port at
-115200 baud instead; `--i2c NAME=TYPE[@ADDRESS]` attaches a device (for example `hi704`)
-to the I2C controller module `NAME` (`--i2c1 TYPE` is the shorthand for
-`I2C1`); `--log-level NAME=LEVEL` sets the level (`debug`, `info`, `warning`,
+115200 baud instead, and `--uart NAME=none` attaches nothing to it (what the
+firmware sends is dropped); `--i2c NAME=TYPE[@ADDRESS]` attaches a device (for example `hi704`)
+to the I2C controller module `NAME` (`--i2c1 TYPE` and `--i2c2 TYPE` are the
+shorthands for `I2C1` and `I2C2`); `--log-level NAME=LEVEL` sets the level (`debug`, `info`, `warning`,
 `error` or `none`, which silences the logger) of one logger, for example
 `--log-level bus=debug`, or of all of them with `--log-level all=debug`; later
 options win. The emulator runs until it receives SIGINT or SIGTERM.
+
+### Configuration
+
+`--print-config` prints the configuration the emulator would start with and
+exits without running it, like `docker compose config`. The blocks are `flash`
+(the file it is mounted on and the loads that go into it, with alias, offset,
+size and file), `memory` (the loads that go to RAM hang below their region),
+`peripherals` (every module with its address ranges, log level and what is
+attached: the host end of a UART, the I2C devices) and `network`:
+
+```
+build/bkemu BK7252 --flash-mount flash.bin --load bootloader:boot.bin --load app:app.bin --print-config
+```
+
+It needs the same profile and `--load` options as a run, and checks the names
+in `--uart`, `--i2c` and `--flash-mount` against the profile.
 
 ### Flash file
 

@@ -52,6 +52,7 @@ TEST_CASE("usage text lists every option") {
                                "--uart2",
                                "--i2c NAME=",
                                "--i2c1",
+                               "--i2c2",
                                "-p, --publish SPEC",
                                "[HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]",
                                "--ssid NAME",
@@ -61,10 +62,17 @@ TEST_CASE("usage text lists every option") {
                                "--wifi-internet",
                                "--pcap FILE",
                                "--flash-mount [NAME=]FILE",
+                               "--print-config",
                                "-h, --help",
                                "BKEMU_PROFILES"})
         CHECK_MESSAGE(u.find(needle) != std::string::npos, needle);
     CHECK(u.back() == '\n');
+}
+
+TEST_CASE("cli print-config is a flag and still needs a profile and a load") {
+    CHECK_FALSE(parse({"BK7252", "--load", "app:a.bin"}).print_config);
+    CHECK(parse({"BK7252", "--load", "app:a.bin", "--print-config"}).print_config);
+    CHECK(error_of({"BK7252", "--print-config"}) == "at least one --load is required");
 }
 
 TEST_CASE("cli requires load") {

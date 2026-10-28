@@ -38,6 +38,8 @@ class Logger {
     static void reset_for_tests();
 
     const std::string &name() const { return name_; }
+    // The level in force: its own, or the root's.
+    Level level() const { return effective_level(); }
 
   private:
     explicit Logger(std::string name) : name_(std::move(name)) {}

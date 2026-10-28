@@ -38,9 +38,11 @@ Jpeg::Jpeg(std::string                  name,
            std::shared_ptr<RequestLine> dma,
            uint32_t                     frame_interval_ms,
            uint32_t                     encode_ms,
-           std::vector<uint8_t>         picture)
+           std::vector<uint8_t>         picture,
+           uint32_t                     burst_words)
     : name_(std::move(name)), clock_(clock), irq_(std::move(irq)), dma_(std::move(dma)),
-      interval_ns_(uint64_t{frame_interval_ms} * 1'000'000), encode_ns_(uint64_t{encode_ms} * 1'000'000) {
+      interval_ns_(uint64_t{frame_interval_ms} * 1'000'000), encode_ns_(uint64_t{encode_ms} * 1'000'000),
+      burst_words_(burst_words) {
     if (picture.size() < 2) throw std::invalid_argument(name_ + ": the picture is too short to be a JPEG");
     picture_ = aligned(std::move(picture));
     if (dma_) {
@@ -60,9 +62,10 @@ void Jpeg::reset() {
     targets_                  = {};
     last_size_ = frame_size_ = last_word_ = 0;
     stream_.clear();
-    offset_ = 0;
+    offset_ = released_ = 0;
     start_ns_.reset();
     end_ns_.reset();
+    release_ns_.reset();
     drive();
 }
 
@@ -75,7 +78,7 @@ uint32_t Jpeg::read(const std::string &, uint32_t offset, uint32_t) {
         case kFifo: return pop();
         case kStatus: return status_;
         case kBytes: return last_size_;
-        case kState: return exhausted() ? 1 : 0;
+        case kState: return empty() ? 1 : 0;
         default:
             if (offset >= kQuant && offset < kQuant + 4 * quant_.size() && offset % 4 == 0)
                 return quant_[(offset - kQuant) / 4];
@@ -99,15 +102,22 @@ void Jpeg::write(const std::string &, uint32_t offset, uint32_t, uint32_t value)
 }
 
 std::optional<uint64_t> Jpeg::next_event_ns() const {
-    if (start_ns_ && end_ns_) return std::min(*start_ns_, *end_ns_);
-    return start_ns_ ? start_ns_ : end_ns_;
+    std::optional<uint64_t> next;
+    for (const auto &t : {start_ns_, end_ns_, release_ns_}) {
+        if (t && (!next || *t < *next)) next = t;
+    }
+    return next;
 }
 
+// At the same time words reach the FIFO before the frame ends, and a frame
+// ends before the next one starts.
 void Jpeg::tick(uint64_t now_ns) {
     while (true) {
         std::optional<uint64_t> due = next_event_ns();
         if (!due || *due > now_ns) break;
-        if (end_ns_ && *due == *end_ns_)
+        if (release_ns_ && *due == *release_ns_)
+            release();
+        else if (end_ns_ && *due == *end_ns_)
             end_frame();
         else
             start_frame(*due);
@@ -125,8 +135,9 @@ void Jpeg::write_ctrl1(uint32_t value) {
     } else if (was_enabled && !enabled) {
         start_ns_.reset();
         end_ns_.reset();
+        release_ns_.reset();
         stream_.clear();
-        offset_ = 0;
+        offset_ = released_ = 0;
         log().log(Level::Debug, "encoder disabled");
     }
 }
@@ -139,11 +150,31 @@ void Jpeg::start_frame(uint64_t at_ns) {
         for (int i = 0; i < 4; ++i) stream_.push_back(static_cast<uint8_t>(frame_size_ >> (8 * i)));
     }
     stream_.resize((stream_.size() + 3) & ~size_t{3}, 0);
-    offset_ = 0;
+    offset_   = 0;
+    frame_ns_ = at_ns;
     status_ |= kStart;
     start_ns_ = at_ns + interval_ns_;
     end_ns_   = at_ns + encode_ns_;
+    release_ns_.reset();
+    if (burst_words_ == 0) {
+        released_ = stream_.size();
+    } else {
+        released_   = 0;
+        release_ns_ = at_ns + encode_ns_ * std::min<uint64_t>(burst_words_, stream_.size() / 4) / (stream_.size() / 4);
+    }
     log().log(Level::Debug, "start_frame: " + std::to_string(stream_.size()) + " bytes");
+}
+
+// The next burst of words reaches the FIFO.
+void Jpeg::release() {
+    const size_t words = stream_.size() / 4;
+    released_          = std::min<size_t>(stream_.size(), released_ + 4 * size_t{burst_words_});
+    if (released_ >= stream_.size()) {
+        release_ns_.reset();
+        return;
+    }
+    const uint64_t next = std::min<uint64_t>(released_ / 4 + burst_words_, words);
+    release_ns_         = frame_ns_ + encode_ns_ * next / words;
 }
 
 void Jpeg::end_frame() {
@@ -154,10 +185,10 @@ void Jpeg::end_frame() {
 }
 
 // The next word of rx_fifo_data: the next four stream bytes, little endian
-// with video_byte_rev set, else big endian. Once the stream is exhausted, the
+// with video_byte_rev set, else big endian. While the FIFO is empty, the
 // last word that was read.
 uint32_t Jpeg::pop() {
-    if (exhausted()) return last_word_;
+    if (empty()) return last_word_;
     uint32_t word = 0;
     for (size_t i = 0; i < 4; ++i) {
         const uint32_t byte = stream_[offset_ + i];
@@ -171,7 +202,7 @@ uint32_t Jpeg::pop() {
 
 void Jpeg::drive() {
     if (irq_) irq_(((status_ & kStart) && (ctrl0_ & kStartInt)) || ((status_ & kEnd) && (ctrl0_ & kEndInt)));
-    if (dma_) dma_->set(!exhausted());
+    if (dma_) dma_->set(!empty());
 }
 
 } // namespace bk

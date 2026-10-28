@@ -70,13 +70,25 @@ struct Fixture {
 
 } // namespace
 
-TEST_CASE("mac has the core and platform ranges") {
+TEST_CASE("mac has the core, platform and PTA ranges") {
     Fixture f;
-    REQUIRE(f.mac.ranges().size() == 2);
+    REQUIRE(f.mac.ranges().size() == 3);
     CHECK(f.mac.ranges()[0].name == "core");
     CHECK(f.mac.ranges()[0].size == 0x1580);
     CHECK(f.mac.ranges()[1].name == "pl");
     CHECK(f.mac.ranges()[1].size == 0x57C);
+    CHECK(f.mac.ranges()[2].name == "pta");
+    CHECK(f.mac.ranges()[2].size == 40);
+}
+
+TEST_CASE("mac PTA bank holds what is written and is cleared by a reset") {
+    Fixture f;
+    f.mac.write("pta", 0x10, 4, 0xCAFE);
+    CHECK(f.mac.read("pta", 0x10, 4) == 0xCAFE);
+    // The other banks are not touched.
+    CHECK(f.pl(0x10) == 0);
+    f.mac.reset();
+    CHECK(f.mac.read("pta", 0x10, 4) == 0);
 }
 
 TEST_CASE("mac counters read 0 while powered down") {

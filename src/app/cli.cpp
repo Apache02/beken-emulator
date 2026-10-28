@@ -40,14 +40,16 @@ std::string usage() {
            "                       net.stack) or of every logger with `all`; LEVEL is\n"
            "                       debug, info, warning, error or none; repeatable\n"
            "  --uart NAME=SPEC     Host end of the UART module NAME from the profile:\n"
-           "                       pty (default), stdio or a serial device path such as\n"
-           "                       /dev/ttyUSB0 (115200 baud); repeatable\n"
+           "                       pty (default), stdio, none (nothing attached) or a serial\n"
+           "                       device path such as /dev/ttyUSB0 (115200 baud);\n"
+           "                       repeatable\n"
            "  --uart1 SPEC         Same as --uart UART1=SPEC\n"
            "  --uart2 SPEC         Same as --uart UART2=SPEC\n"
            "  --i2c NAME=DEVICE    Attach a device to the I2C controller module NAME of the\n"
            "                       profile; DEVICE is TYPE or TYPE@ADDRESS (7-bit, 0x08-0x77),\n"
            "                       for example hi704; repeatable\n"
            "  --i2c1 DEVICE        Same as --i2c I2C1=DEVICE\n"
+           "  --i2c2 DEVICE        Same as --i2c I2C2=DEVICE\n"
            "  --flash-mount [NAME=]FILE\n"
            "                       Keep the flash in FILE, like a virtual machine disk:\n"
            "                       created with the size of the flash if missing, every\n"
@@ -76,6 +78,9 @@ std::string usage() {
            "                       pcap; FILE may be a named pipe (mkfifo) that Wireshark\n"
            "                       reads live: wireshark -k -i FILE; needs --wifi-ap,\n"
            "                       --ssid or --publish\n"
+           "  --print-config       Print the configuration the emulator would start with\n"
+           "                       (profile, flash and loads, memory, peripherals, network)\n"
+           "                       and exit without running it\n"
            "  -h, --help           Show this help and exit\n"
            "\n"
            "Environment:\n"
@@ -135,6 +140,8 @@ CliOptions parse_cli(int argc, char **argv) {
             o.pcap = std::move(file);
         } else if (opt == "--wifi-internet") {
             o.wifi_internet = true;
+        } else if (opt == "--print-config") {
+            o.print_config = true;
         } else if (opt == "--wifi-channel") {
             std::string v = value();
             if (v.empty() || v.size() > 2 ||
@@ -156,7 +163,8 @@ CliOptions parse_cli(int argc, char **argv) {
             if (eq == std::string::npos || eq == 0 || eq + 1 == v.size())
                 throw CliError("--log-level needs NAME=LEVEL");
             std::optional<Level> level = Logger::parse_level(std::string_view(v).substr(eq + 1));
-            if (!level) throw CliError("bad log level '" + v.substr(eq + 1) + "' (want debug, info, warning, error or none)");
+            if (!level)
+                throw CliError("bad log level '" + v.substr(eq + 1) + "' (want debug, info, warning, error or none)");
             o.log_levels.emplace_back(v.substr(0, eq), *level);
         } else if (opt == "--uart") {
             std::string v  = value();
@@ -175,8 +183,8 @@ CliOptions parse_cli(int argc, char **argv) {
             std::string file = name.empty() ? v : v.substr(name.size() + 1);
             if (file.empty()) throw CliError("--flash-mount needs [NAME=]FILE");
             o.flash_mounts.emplace_back(std::move(name), std::move(file));
-        } else if (opt == "--i2c1") {
-            o.i2c.emplace_back("I2C1", value());
+        } else if (opt == "--i2c1" || opt == "--i2c2") {
+            o.i2c.emplace_back("I2C" + opt.substr(5), value());
         } else if (opt == "--uart1" || opt == "--uart2") {
             o.uart["UART" + opt.substr(6)] = value();
         } else if (arg.size() > 1 && arg[0] == '-') {

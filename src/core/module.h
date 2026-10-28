@@ -24,16 +24,6 @@ struct Range {
     uint32_t    size;
 };
 
-// Half-open span [start, end) of bytes within a page that must not be cached.
-struct BadSpan {
-    uint32_t start, end;
-};
-
-struct Page {
-    std::array<uint8_t, 4096> data;
-    std::vector<BadSpan>      bad;
-};
-
 // The instruction the CPU is executing: its address, its opcode and the opcode
 // width in bytes (2 for Thumb, 4 for ARM).
 struct Instruction {
@@ -101,16 +91,12 @@ class Module {
     virtual std::string name() const = 0;
     // Whether images can be loaded into this module (see check_load/load).
     virtual bool loadable() const { return false; }
-    // Ranges served page by page on demand rather than via read/write.
-    virtual std::vector<Range> demand_ranges() const { return {}; }
+    // The register ranges, served by read/write. A module with memory behind
+    // it of its own also implements XipMemory.
     virtual std::vector<Range> ranges() const = 0;
 
     virtual uint32_t read(const std::string &range, uint32_t offset, uint32_t size)                  = 0;
     virtual void     write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) = 0;
-    virtual Page     page(const std::string &range, uint32_t page_offset) {
-        (void)range;
-        throw Fault{Fault::Kind::Dabt, page_offset};
-    }
 
     virtual void tick(uint64_t now_ns) { (void)now_ns; }
     // Time of the next scheduled event, if any.
@@ -126,9 +112,6 @@ class Module {
     virtual void load(uint32_t offset, std::span<const uint8_t> data) {
         check_load(offset, static_cast<uint32_t>(data.size()));
     }
-
-    // Set by the bus: tells it that [offset, offset+size) of `range` changed.
-    std::function<void(const std::string &, uint32_t, uint32_t)> invalidate;
 
     virtual Signal signal(const std::string &signal_name) {
         throw std::invalid_argument(name() + ": no signal " + signal_name);

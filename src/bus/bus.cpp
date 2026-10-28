@@ -88,18 +88,16 @@ void Bus::add_memory(std::string name, uint32_t base, uint32_t size, bool execut
 }
 
 void Bus::claim(Module &module, const std::map<std::string, uint32_t> &bases) {
-    const std::string        mod_name = module.name();
-    const std::vector<Range> demand   = module.demand_ranges();
-    std::vector<Range>       ranges   = module.ranges();
-    for (const Range &d : demand)
-        if (std::none_of(ranges.begin(), ranges.end(), [&](const Range &r) { return r.name == d.name; }))
-            ranges.push_back(d);
+    const std::string  mod_name = module.name();
+    XipMemory         *xip      = dynamic_cast<XipMemory *>(&module);
+    std::vector<Range> ranges   = module.ranges();
+    if (xip) ranges.push_back({"xip", xip->xip_size()});
 
     std::vector<Entry> fresh;
     for (const Range &r : ranges) {
         auto base = bases.find(r.name);
         if (base == bases.end()) throw std::invalid_argument(mod_name + ": no base for range " + r.name);
-        bool is_demand = std::any_of(demand.begin(), demand.end(), [&](const Range &d) { return d.name == r.name; });
+        const bool is_demand = xip && r.name == "xip";
         fresh.push_back({base->second, uint64_t{base->second} + r.size, &module, mod_name, r.name, is_demand});
     }
     for (size_t i = 0; i < fresh.size(); ++i) {
@@ -117,7 +115,7 @@ void Bus::claim(Module &module, const std::map<std::string, uint32_t> &bases) {
         const Entry &stored = entries_.emplace_back(std::move(e));
         if (stored.demand) {
             demands_.push_back(std::make_unique<Demand>(
-                Demand{this, stored.module, stored.range, stored.base, stored.end, false, {}}));
+                Demand{this, stored.module, xip, stored.range, stored.base, stored.end, false, {}}));
             continue;
         }
         Slot slot{stored.base, stored.end, stored.module, &stored.range};
@@ -129,11 +127,12 @@ void Bus::claim(Module &module, const std::map<std::string, uint32_t> &bases) {
     }
     map_outside(outside);
 
-    Module *m         = &module;
-    module.invalidate = [this, m](const std::string &range, uint32_t offset, uint32_t size) {
-        for (auto &d : demands_)
-            if (d->module == m && d->range == range) invalidate(*d, offset, size);
-    };
+    if (xip) {
+        xip->xip_invalidate = [this, xip](uint32_t offset, uint32_t size) {
+            for (auto &d : demands_)
+                if (d->xip == xip) invalidate(*d, offset, size);
+        };
+    }
 }
 
 bool Bus::in_window(uint32_t base, uint64_t end) const {
@@ -234,10 +233,10 @@ std::vector<uint8_t> Bus::read_chunk(uint32_t addr, uint32_t size) {
     const uint32_t offset   = addr - d->base;
     const uint32_t page_off = offset & kPageMask;
     const uint32_t n        = std::min<uint32_t>(size, page_off + kPage - offset);
-    Page           page     = d->module->page(d->range, page_off);
+    Page           page     = d->xip->xip_page(page_off);
     if (hits(page.bad, offset - page_off, n)) {
         try {
-            d->module->read(d->range, offset, n); // logs the details and raises the fault
+            d->xip->xip_read(offset, n); // logs the details and raises the fault
         } catch (const Fault &) {
         }
         throw BusError(addr, "unreadable block");
@@ -477,7 +476,7 @@ Bus::Demand *Bus::find_demand(uint32_t addr) {
 void Bus::abort_in_page(Demand &d, uint32_t addr, uint32_t size, Fault::Kind kind) {
     // The module logs the details and raises the fault; only its kind is replaced.
     try {
-        d.module->read(d.range, addr - d.base, size);
+        d.xip->xip_read(addr - d.base, size);
     } catch (const Fault &) {
     } catch (const std::exception &e) {
         log_.log(Level::Error, d.range + " read failed: " + e.what());
@@ -490,7 +489,7 @@ bool Bus::demand_access(Demand &d, uint32_t addr, uint32_t size, bool fetch) {
     const uint32_t    page_addr = addr & kPageMask;
     Page              page;
     try {
-        page = d.module->page(d.range, page_addr - d.base);
+        page = d.xip->xip_page(page_addr - d.base);
     } catch (const Fault &) {
         cpu_.post_fault(kind);
         return false;

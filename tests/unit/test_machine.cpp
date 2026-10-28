@@ -95,7 +95,7 @@ Profile chip() {
 
 ModuleSpec flash_spec() {
     return {
-        "flash", "FLASH", {{"xip", kXip}, {"ctrl", kFlashCtrl}},
+        "flash", "FLASH", {{"xip", kXip}, {"regs", kFlashCtrl}},
           {{"jedec_id", 0xEF4016}}
     };
 }
@@ -341,8 +341,8 @@ TEST_CASE("machine assembles minimal profile") {
     for (const auto &r : m.bus().module_ranges())
         claimed.push_back(r.module + "." + r.range + "@" + std::to_string(r.base));
     CHECK(claimed == std::vector<std::string>{
+                         "FLASH.regs@" + std::to_string(kFlashCtrl),
                          "FLASH.xip@" + std::to_string(kXip),
-                         "FLASH.ctrl@" + std::to_string(kFlashCtrl),
                          "ICU.regs@" + std::to_string(kIcu),
                          "WDT.regs@" + std::to_string(kWdt),
                          "TIMER.regs@" + std::to_string(kTimer),
@@ -398,7 +398,7 @@ TEST_CASE("unknown and wifi_mac take a log_level for their stand-in registers") 
     Profile    p = chip();
     ModuleSpec blk{"unknown", "BLK", {{"regs", 0x00802D00}}, {}};
     ModuleSpec mac{
-        "wifi_mac", "MAC", {{"core", 0xC0000000}, {"pl", 0xC0008000}},
+        "wifi_mac", "MAC", {{"core", 0xC0000000}, {"pl", 0xC0008000}, {"pta", 0xC0010000}},
           {}
     };
     blk.params.set("log_level", "debug");
@@ -436,9 +436,9 @@ TEST_CASE("signal owner declared after user rejected") {
 TEST_CASE("bases missing a range name rejected") {
     Profile    p = chip();
     ModuleSpec f = flash_spec();
-    f.bases.erase("ctrl");
+    f.bases.erase("regs");
     p.modules = {f};
-    CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()), "FLASH: no base for range ctrl", std::invalid_argument);
+    CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()), "FLASH: no base for range regs", std::invalid_argument);
 }
 
 TEST_CASE("unknown profile params ignored") {
@@ -776,7 +776,8 @@ TEST_CASE("the jpeg module's frame reaches RAM through the GDMA request line") {
           {"dma", "GDMA"},
           {"dma_request", 8},
           {"frame_interval_ms", 1},
-          {"encode_ms", 1}}}
+          {"encode_ms", 1},
+          {"burst_words", 0}}}
     };
     Machine m(p, builtin_registry());
     Module *jpeg = m.module("JPEG");

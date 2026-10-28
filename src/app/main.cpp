@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "app/cli.h"
+#include "app/config_report.h"
 #include "app/endpoints.h"
 #include "app/registry.h"
 #include "core/loader.h"
@@ -25,7 +26,7 @@
 #include "net/pcap.h"
 #include "net/router/router_network.h"
 #include "periph/flash.h"
-#include "periph/i2c1.h"
+#include "i2c/device.h"
 #include "periph/sctrl.h"
 #include "periph/uart.h"
 #include "periph/unknown.h"
@@ -105,12 +106,16 @@ int run(int argc, char **argv) {
     std::vector<std::pair<std::string, std::unique_ptr<bk::I2cDevice>>> i2c_devices;
     for (const auto &[bus, spec] : options.i2c) i2c_devices.emplace_back(bus, bk::parse_device_spec(spec));
     bk::Machine machine(profile, bk::builtin_registry());
+    if (options.print_config) {
+        std::cout << bk::config_report(options, profile, machine) << std::flush;
+        return 0;
+    }
     // Files are mounted first, so the loads below go to them.
     for (const auto &[name, file] : options.flash_mounts) mount_flash(machine, profile, name, file);
     std::vector<bk::LoadAction> loads = bk::plan_loads(machine, options.loads);
     bk::apply(loads);
     for (const auto &[bus, device] : i2c_devices) {
-        auto *controller = dynamic_cast<bk::I2c1 *>(machine.module(bus));
+        auto *controller = dynamic_cast<bk::I2cBus *>(machine.module(bus));
         if (!controller) throw std::invalid_argument("no I2C bus named " + bus + " in profile " + profile.name);
         controller->attach(device.get());
     }
@@ -185,6 +190,10 @@ int run(int argc, char **argv) {
         const std::string &name     = m.name;
         auto               given    = options.uart.find(name);
         auto               endpoint = bk::make_endpoint(given == options.uart.end() ? "pty" : given->second);
+        if (!endpoint) {
+            std::cout << name << ": none" << std::endl;
+            continue;
+        }
         uart->attach(endpoint.get());
         std::cout << name << ": " << endpoint->description() << std::endl;
         endpoints[name] = std::move(endpoint);

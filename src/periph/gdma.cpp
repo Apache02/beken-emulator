@@ -361,7 +361,7 @@ void Gdma::write_channel(unsigned index, uint32_t within, uint32_t value) {
 
 namespace {
 
-std::string describe(uint32_t cfg, uint32_t mux, uint32_t src, uint32_t dst) {
+std::string describe(uint32_t cfg, uint32_t mux, uint32_t src, uint32_t dst, const std::array<uint32_t, 4> &loops) {
     const uint32_t length = (cfg >> 16) + 1;
     const unsigned sdw = (cfg >> 4) & 3, ddw = (cfg >> 6) & 3;
     std::string    events;
@@ -369,8 +369,8 @@ std::string describe(uint32_t cfg, uint32_t mux, uint32_t src, uint32_t dst) {
     if (cfg & kHalfInt) events += std::string(events.empty() ? "" : "+") + "h_fin";
     std::string notes;
     if (cfg & kRepeat) notes += ", repeat";
-    if (cfg & kSrcLoop) notes += ", src loop";
-    if (cfg & kDstLoop) notes += ", dst loop";
+    if (cfg & kSrcLoop) notes += fmt(", src loop 0x%08X..0x%08X", loops[3], loops[2]);
+    if (cfg & kDstLoop) notes += fmt(", dst loop 0x%08X..0x%08X", loops[1], loops[0]);
     const uint32_t rd = (mux >> 12) & 0xF, wr = (mux >> 16) & 0xF;
     if (rd || wr) notes += fmt(", interval r%u/w%u", rd, wr);
     return fmt("%s -> %s, %u bytes (%u writes), src %u-bit %s, dst %u-bit %s, irq: %s%s",
@@ -401,9 +401,10 @@ void Gdma::write_config(unsigned index, Channel &channel, uint32_t value) {
     } else if (value == 0) {
         log().log(Level::Debug, fmt("ch%u config cleared", index));
     } else if (!enable && channel.src != 0 && channel.dst != 0) {
-        log().log(
-            Level::Debug,
-            fmt("ch%u config %s", index, describe(channel.config, channel.mux, channel.src, channel.dst).c_str()));
+        log().log(Level::Debug,
+                  fmt("ch%u config %s",
+                      index,
+                      describe(channel.config, channel.mux, channel.src, channel.dst, channel.loops).c_str()));
     }
 }
 
@@ -427,7 +428,7 @@ void Gdma::start(unsigned index, Channel &channel) {
     log().log(Level::Info,
               fmt("ch%u start: %s, est %s",
                   index,
-                  describe(cfg, channel.mux, channel.src, channel.dst).c_str(),
+                  describe(cfg, channel.mux, channel.src, channel.dst, channel.loops).c_str(),
                   human(duration).c_str()));
     if (channel.paced) {
         channel.word_ns = std::max<uint64_t>(duration / std::max<uint64_t>(channel.mover->writes_total, 1), 1);

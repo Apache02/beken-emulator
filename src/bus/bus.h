@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "core/module.h"
+#include "core/xip.h"
 #include "cpu/cpu.h"
 
 namespace bk {
@@ -38,9 +39,9 @@ struct RangeInfo {
 //
 // RAM regions are mapped directly. Module ranges are dispatched by address:
 // the peripheral window is a single MMIO region, and ranges outside it are
-// mapped as MMIO page by page (runs of adjacent pages merged). Demand ranges
-// (a module's demand_ranges()) are mapped read+execute one 4 KiB page at a
-// time on first use from the module's page() data; bytes in a page's bad spans
+// mapped as MMIO page by page (runs of adjacent pages merged). The window of a
+// module that implements XipMemory is mapped read+execute one 4 KiB page at a
+// time on first use from its xip_page() data; bytes in a page's bad spans
 // abort when read or executed. Accesses nothing answers become aborts.
 //
 // Unmapped accesses go to one hook installed by the constructor, which offers
@@ -64,9 +65,10 @@ class Bus {
     // aligned. Throws std::invalid_argument if the window overlaps RAM or a
     // module range, or breaks those rules.
     void add_memory(std::string name, uint32_t base, uint32_t size, bool executable, uint32_t window = 0);
-    // Places each of the module's ranges (and demand ranges) at bases[range
-    // name]. Throws std::invalid_argument if a base is missing or a range
-    // overlaps RAM or another range. Installs module.invalidate.
+    // Places each of the module's ranges at bases[range name], and its XIP
+    // window, when it implements XipMemory, at bases["xip"]. Throws
+    // std::invalid_argument if a base is missing or a range overlaps RAM or
+    // another range. Installs the module's xip_invalidate.
     void claim(Module &module, const std::map<std::string, uint32_t> &bases);
     // Maps the peripheral window [win_base, win_base + win_size) as one MMIO
     // region (addresses no range claims read 0 and ignore writes) and maps the
@@ -126,7 +128,8 @@ class Bus {
     struct Demand {
         Bus                                            *bus;
         Module                                         *module;
-        std::string                                     range;
+        XipMemory                                      *xip;
+        std::string                                     range; // always "xip"
         uint32_t                                        base;
         uint64_t                                        end;
         bool                                            warned = false;

@@ -33,6 +33,7 @@ add_library(bk_core STATIC
         src/core/mapped_file.cpp
         src/app/registry.cpp
         src/app/cli.cpp
+        src/app/config_report.cpp
         src/app/endpoints.cpp
         src/periph/flash.cpp
         src/i2c/catalog.cpp
@@ -40,6 +41,7 @@ add_library(bk_core STATIC
         src/periph/gdma.cpp
         src/periph/gpio.cpp
         src/periph/i2c1.cpp
+        src/periph/i2c2.cpp
         src/periph/intc.cpp
         src/periph/jpeg.cpp
         src/periph/saradc.cpp
@@ -99,6 +101,7 @@ add_executable(unit_tests
         tests/unit/test_nat.cpp
         tests/unit/test_pcap.cpp
         tests/unit/test_i2c1.cpp
+        tests/unit/test_i2c2.cpp
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp
         tests/unit/test_saradc.cpp
@@ -113,6 +116,7 @@ add_executable(unit_tests
         tests/unit/test_machine.cpp
         tests/unit/test_loader.cpp
         tests/unit/test_cli.cpp
+        tests/unit/test_config_report.cpp
         tests/unit/test_endpoints.cpp
         tests/unit/test_executable.cpp
         tests/unit/test_unicorn_smoke.cpp)

@@ -179,6 +179,7 @@ class SerialEndpoint : public ByteEndpoint {
 } // namespace
 
 std::unique_ptr<ByteEndpoint> make_endpoint(std::string_view spec) {
+    if (spec == "none") return nullptr;
     if (spec == "pty") return std::make_unique<PtyEndpoint>();
     if (spec == "stdio") return make_stdio_endpoint(STDIN_FILENO, STDOUT_FILENO);
     return std::make_unique<SerialEndpoint>(std::string(spec));

@@ -43,8 +43,9 @@ struct Fixture {
     std::shared_ptr<RequestLine> dma = std::make_shared<RequestLine>();
     Jpeg                         jpeg;
 
-    explicit Fixture(std::vector<uint8_t> pic = picture(20)) // 20 + 5 = 25: not aligned either
-        : jpeg("JPEG", clock, [this](bool v) { irq.push_back(v); }, dma, 1000, 150, std::move(pic)) {}
+    explicit Fixture(std::vector<uint8_t> pic         = picture(20), // 20 + 5 = 25: not aligned either
+                     uint32_t             burst_words = 0)
+        : jpeg("JPEG", clock, [this](bool v) { irq.push_back(v); }, dma, 1000, 150, std::move(pic), burst_words) {}
 
     void     w(uint32_t off, uint32_t v) { jpeg.write("regs", off, 4, v); }
     uint32_t r(uint32_t off) { return jpeg.read("regs", off, 4); }
@@ -293,6 +294,59 @@ TEST_CASE("jpeg the DMA line is high while words remain and the DMA read returns
     CHECK(reversed == std::array<uint8_t, 4>{0x13, 0x12, 0xD8, 0xFF}); // reversed in memory
     while (f.dma->level()) f.dma->read();
     CHECK(f.r(kState) == 1);
+}
+
+TEST_CASE("jpeg burst_words releases the stream in bursts spread over the encode time") {
+    // 59 + 5 = 64 bytes, 16 words, in bursts of 4: one every 37.5 ms of the 150.
+    const uint32_t flags = kByteRev | kEncSize;
+    Fixture        f(picture(59), 4);
+    Fixture        whole(picture(59));
+    whole.first_frame(flags);
+    const std::vector<uint8_t> frame = whole.drain();
+    REQUIRE(frame.size() == 64);
+
+    f.first_frame(flags);
+    CHECK(f.r(kState) == 1);
+    CHECK_FALSE(f.dma->level());
+    CHECK(f.jpeg.next_event_ns() == std::optional<uint64_t>(1000 * kMs + 37'500'000));
+
+    std::vector<uint8_t> got;
+    auto                 take = [&] {
+        std::vector<uint8_t> part = f.drain();
+        got.insert(got.end(), part.begin(), part.end());
+        return part.size();
+    };
+    f.at(1000 * kMs + 37'500'000);
+    CHECK(f.dma->level());
+    CHECK(take() == 16);
+    CHECK_FALSE(f.dma->level());
+    f.at(1075 * kMs);
+    CHECK(take() == 16);
+    f.at(1112 * kMs + 500'000);
+    CHECK(take() == 16);
+    // The last burst comes with the end of the frame, and the frame ends after it.
+    CHECK(f.r(kStatus) == 1);
+    CHECK(f.jpeg.next_event_ns() == std::optional<uint64_t>(1150 * kMs));
+    f.at(1150 * kMs);
+    CHECK(take() == 16);
+    CHECK(f.r(kStatus) == 3);
+    CHECK(got == frame);
+    CHECK(f.jpeg.next_event_ns() == std::optional<uint64_t>(2000 * kMs));
+}
+
+TEST_CASE("jpeg burst_words after a late tick, and when the encoder is disabled") {
+    Fixture f(picture(59), 4);
+    f.w(kCtrl1, kEncEn | kByteRev | kEncSize);
+    f.at(1300 * kMs);
+    CHECK(f.r(kStatus) == 3);
+    CHECK(f.drain().size() == 64);
+    f.at(2020 * kMs); // the next frame has just begun
+    CHECK(f.r(kState) == 1);
+    f.at(2040 * kMs);
+    CHECK(f.r(kState) == 0);
+    f.w(kCtrl1, 0);
+    CHECK(f.r(kState) == 1);
+    CHECK_FALSE(f.jpeg.next_event_ns().has_value());
 }
 
 TEST_CASE("jpeg the default picture works and is a JPEG") {
