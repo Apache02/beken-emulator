@@ -22,7 +22,7 @@ std::string name_prefix(const std::string &v) {
 } // namespace
 
 std::string usage() {
-    return "Usage: bkemu PROFILE --load TARGET:FILE [--load TARGET:FILE]... [options]\n"
+    return "Usage: bkemu PROFILE (--load TARGET:FILE | --flash-mount [NAME=]FILE)... [options]\n"
            "\n"
            "Runs firmware in an emulated BK7252. Prints the host end of each UART\n"
            "(for example `UART2: /dev/pts/7`) and runs until SIGINT or SIGTERM.\n"
@@ -33,8 +33,9 @@ std::string usage() {
            "\n"
            "Options:\n"
            "  --load TARGET:FILE   Load an image before start; repeatable, at least one is\n"
-           "                       required. TARGET is a profile alias (for example\n"
-           "                       bootloader, app, RAM, IRAM) or an address\n"
+           "                       required unless --flash-mount names an existing file.\n"
+           "                       TARGET is a profile alias (for example bootloader,\n"
+           "                       app, RAM, IRAM) or an address\n"
            "  --log-level NAME=LEVEL\n"
            "                       Set the level of the logger NAME (for example bus,\n"
            "                       net.stack) or of every logger with `all`; LEVEL is\n"
@@ -197,7 +198,7 @@ CliOptions parse_cli(int argc, char **argv) {
         }
     }
     if (!have_profile) throw CliError("a profile name is required");
-    if (o.loads.empty()) throw CliError("at least one --load is required");
+    if (o.loads.empty() && o.flash_mounts.empty()) throw CliError("at least one --load or --flash-mount is required");
     if ((o.wifi_password || wifi_channel || o.wifi_internet) && !o.wifi_ap)
         throw CliError("--wifi-password, --wifi-channel and --wifi-internet need --wifi-ap");
     if (o.wifi_ap && o.ssid) throw CliError("--wifi-ap and --ssid exclude each other");

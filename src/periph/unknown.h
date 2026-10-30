@@ -28,12 +28,15 @@ class Unknown : public Module {
     // `size` is in bytes (rounded up to whole words). `reset_words` maps a
     // word-aligned offset inside the block to its start value; throws
     // std::invalid_argument for any other offset. `instruction` may be empty.
-    // `level` is the level of the access log lines.
+    // `level` is the level of the access log lines. `self_clear` maps an offset
+    // (checked as `reset_words`) to the bits that read 0 after any write: a
+    // command bit whose operation completes at once.
     Unknown(std::string                  name,
             uint32_t                     size,
             std::map<uint32_t, uint32_t> reset_words,
             InstructionSource            instruction,
-            Level                        level = Level::Info);
+            Level                        level      = Level::Info,
+            std::map<uint32_t, uint32_t> self_clear = {});
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {
@@ -64,6 +67,7 @@ class Unknown : public Module {
     std::map<uint32_t, uint32_t> reset_words_;
     InstructionSource            instruction_;
     Level                        level_;
+    std::map<uint32_t, uint32_t> self_clear_;
     std::vector<uint32_t>        words_;
 };
 

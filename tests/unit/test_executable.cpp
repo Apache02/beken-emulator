@@ -176,17 +176,28 @@ TEST_CASE("executable --help prints usage and exits 0") {
         REQUIRE(status.has_value());
         CHECK(*status == 0);
         c.drain(100);
-        CHECK(c.out_text.starts_with("Usage: bkemu PROFILE --load TARGET:FILE"));
+        CHECK(c.out_text.starts_with("Usage: bkemu PROFILE (--load TARGET:FILE | --flash-mount [NAME=]FILE)..."));
         CHECK(c.err_text.empty());
     }
 }
 
-TEST_CASE("executable without --load exits 2") {
+TEST_CASE("executable without --load or --flash-mount exits 2") {
     Child c({"BK7252"});
     auto  status = c.wait_exit(2000ms);
     REQUIRE(status.has_value());
     CHECK(*status == 2);
-    CHECK(c.err_text == "error: at least one --load is required\n");
+    CHECK(c.err_text == "error: at least one --load or --flash-mount is required\n");
+}
+
+TEST_CASE("executable with only a new flash file exits 2") {
+    TempDir  dir;
+    fs::path file = dir.path / "flash.bin";
+    Child    c({"BK7252", "--flash-mount", file.string()});
+    auto     status = c.wait_exit(2000ms);
+    REQUIRE(status.has_value());
+    CHECK(*status == 2);
+    CHECK(c.err_text == "error: flash file " + file.string() + " does not exist; a new one needs --load\n");
+    CHECK_FALSE(fs::exists(file));
 }
 
 TEST_CASE("executable with a missing load file exits 2") {

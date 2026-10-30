@@ -13,14 +13,19 @@ Unknown::Unknown(std::string                  name,
                  uint32_t                     size,
                  std::map<uint32_t, uint32_t> reset_words,
                  InstructionSource            instruction,
-                 Level                        level)
+                 Level                        level,
+                 std::map<uint32_t, uint32_t> self_clear)
     : name_(std::move(name)), size_(size), reset_words_(std::move(reset_words)), instruction_(std::move(instruction)),
-      level_(level), words_((uint64_t{size} + 3) / 4, 0) {
-    for (const auto &[offset, word] : reset_words_) {
-        if (offset % 4 != 0 || offset / 4 >= words_.size())
-            throw std::invalid_argument(name_ + ": reset word offset " + std::to_string(offset) +
-                                        " is not a word inside the block");
-    }
+      level_(level), self_clear_(std::move(self_clear)), words_((uint64_t{size} + 3) / 4, 0) {
+    auto check = [this](const std::map<uint32_t, uint32_t> &words, const char *what) {
+        for (const auto &[offset, word] : words) {
+            if (offset % 4 != 0 || offset / 4 >= words_.size())
+                throw std::invalid_argument(name_ + ": " + what + " offset " + std::to_string(offset) +
+                                            " is not a word inside the block");
+        }
+    };
+    check(reset_words_, "reset word");
+    check(self_clear_, "self_clear");
     reset();
 }
 
@@ -48,6 +53,7 @@ void Unknown::write(const std::string &, uint32_t offset, uint32_t size, uint32_
         const uint32_t mask  = ((1u << (size * 8)) - 1) << shift;
         word                 = (word & ~mask) | ((value << shift) & mask);
     }
+    if (auto it = self_clear_.find(offset & ~3u); it != self_clear_.end()) word &= ~it->second;
 }
 
 void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t value) {

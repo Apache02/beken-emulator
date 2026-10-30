@@ -40,10 +40,17 @@ class Cpu {
     // ended on a wait-for-interrupt instruction, Budget (with `budget`)
     // otherwise, Stopped (with 0) after stop(). Throws std::runtime_error when
     // execution fails in a way no exception entry explains.
+    //
+    // Interrupts are taken between slices. A wait with an interrupt pending but
+    // masked does not idle (Budget with 1): as on the chip, the core wakes and
+    // runs on, and the next instructions run one at a time so that the
+    // interrupt is taken as soon as the firmware unmasks it.
     std::pair<RunResult, uint32_t> run(uint32_t budget);
 
     void raise_irq(bool level) { irq_ = level; }
     void raise_fiq(bool level) { fiq_ = level; }
+    bool irq_raised() const { return irq_; }
+    bool fiq_raised() const { return fiq_; }
 
     // Safe to call from inside a Unicorn memory callback: records an abort for
     // the instruction currently executing (unless one is already pending) and
@@ -80,12 +87,15 @@ class Cpu {
     bool        thumb();
     bool        at_wait_for_interrupt();
 
-    uc_engine              *uc_        = nullptr;
-    uc_hook                 intr_hook_ = 0;
-    bool                    irq_       = false;
-    bool                    fiq_       = false;
-    bool                    restart_   = false;
-    bool                    stopped_   = false;
+    uc_engine *uc_        = nullptr;
+    uc_hook    intr_hook_ = 0;
+    bool       irq_       = false;
+    bool       fiq_       = false;
+    bool       restart_   = false;
+    bool       stopped_   = false;
+    // Instructions left to run one at a time after a wait that an interrupt
+    // masked at the time woke (see run()).
+    uint32_t                wake_steps_ = 0;
     std::optional<Pending>  pending_;
     std::optional<uint32_t> bad_intno_;
 };

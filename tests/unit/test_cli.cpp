@@ -44,7 +44,7 @@ TEST_CASE("cli help stops parsing at once") {
 
 TEST_CASE("usage text lists every option") {
     std::string u = usage();
-    CHECK(u.starts_with("Usage: bkemu PROFILE --load TARGET:FILE"));
+    CHECK(u.starts_with("Usage: bkemu PROFILE (--load TARGET:FILE | --flash-mount [NAME=]FILE)..."));
     for (const char *needle : {"--load",
                                "--log-level NAME=LEVEL",
                                "--uart NAME=SPEC",
@@ -72,12 +72,16 @@ TEST_CASE("usage text lists every option") {
 TEST_CASE("cli print-config is a flag and still needs a profile and a load") {
     CHECK_FALSE(parse({"BK7252", "--load", "app:a.bin"}).print_config);
     CHECK(parse({"BK7252", "--load", "app:a.bin", "--print-config"}).print_config);
-    CHECK(error_of({"BK7252", "--print-config"}) == "at least one --load is required");
+    CHECK(error_of({"BK7252", "--print-config"}) == "at least one --load or --flash-mount is required");
 }
 
-TEST_CASE("cli requires load") {
-    CHECK(error_of({"BK7252"}) == "at least one --load is required");
-    CHECK(error_of({"BK7252", "--log-level", "bus=debug"}) == "at least one --load is required");
+TEST_CASE("cli requires a load or a flash mount") {
+    CHECK(error_of({"BK7252"}) == "at least one --load or --flash-mount is required");
+    CHECK(error_of({"BK7252", "--log-level", "bus=debug"}) == "at least one --load or --flash-mount is required");
+    CliOptions o = parse({"BK7252", "--flash-mount", "flash.bin"});
+    CHECK(o.loads.empty());
+    REQUIRE(o.flash_mounts.size() == 1);
+    CHECK(o.flash_mounts[0].second == "flash.bin");
 }
 
 TEST_CASE("cli parses profile, loads and uarts") {

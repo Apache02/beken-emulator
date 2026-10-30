@@ -11,13 +11,16 @@
 
 #include "periph/flash.h"
 #include "periph/gdma.h"
+#include "periph/gdma_bk7252n.h"
 #include "periph/gpio.h"
 #include "periph/i2c1.h"
 #include "periph/i2c2.h"
 #include "periph/default_picture.h"
 #include "periph/intc.h"
 #include "periph/jpeg.h"
+#include "periph/jpeg_bk7252n.h"
 #include "periph/saradc.h"
+#include "periph/saradc_bk7238.h"
 #include "periph/sctrl.h"
 #include "periph/sdhost.h"
 #include "periph/timer.h"
@@ -153,6 +156,18 @@ Level log_level(const ModuleContext &ctx) {
     return *level;
 }
 
+// The JPEG file named by `picture`, or the built-in picture.
+std::vector<uint8_t> picture_param(const ModuleContext &ctx) {
+    std::vector<uint8_t> picture(kDefaultPicture, kDefaultPicture + kDefaultPicture_size);
+    if (const ParamValue *path = ctx.params.find("picture")) {
+        if (!path->string()) bad(ctx, "picture must be a file name");
+        std::ifstream file(*path->string(), std::ios::binary);
+        if (!file) bad(ctx, "cannot read picture '" + *path->string() + "'");
+        picture.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    }
+    return picture;
+}
+
 } // namespace
 
 ModuleRegistry builtin_registry() {
@@ -169,6 +184,12 @@ ModuleRegistry builtin_registry() {
         if (bus_hz == 0) bad(ctx, "bus_hz must not be 0");
         if (!ctx.memory) bad(ctx, "needs a bus master port");
         return std::make_unique<Gdma>(ctx.name, ctx.clock, ctx.irq, *ctx.memory, bus_hz);
+    };
+    r["gdma_bk7252n"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t bus_hz = u32_param(ctx, "bus_hz", 120000000);
+        if (bus_hz == 0) bad(ctx, "bus_hz must not be 0");
+        if (!ctx.memory) bad(ctx, "needs a bus master port");
+        return std::make_unique<GdmaBk7252n>(ctx.name, ctx.clock, ctx.irq, *ctx.memory, bus_hz);
     };
     r["gpio"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Gpio>(ctx.name, ctx.irq, u32_param(ctx, "pin_reset", 0), reset_words(ctx));
@@ -187,24 +208,30 @@ ModuleRegistry builtin_registry() {
         return std::make_unique<Intc>(ctx.name, ctx.cpu_irq, ctx.cpu_fiq, reset_words(ctx), signal_specs(ctx));
     };
     r["jpeg"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
-        std::vector<uint8_t> picture(kDefaultPicture, kDefaultPicture + kDefaultPicture_size);
-        if (const ParamValue *path = ctx.params.find("picture")) {
-            if (!path->string()) bad(ctx, "picture must be a file name");
-            std::ifstream file(*path->string(), std::ios::binary);
-            if (!file) bad(ctx, "cannot read picture '" + *path->string() + "'");
-            picture.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-        }
         return std::make_unique<Jpeg>(ctx.name,
                                       ctx.clock,
                                       ctx.irq,
                                       ctx.dma,
                                       u32_param(ctx, "frame_interval_ms", 62),
                                       u32_param(ctx, "encode_ms", 50),
-                                      std::move(picture),
+                                      picture_param(ctx),
                                       u32_param(ctx, "burst_words", 64));
+    };
+    r["jpeg_bk7252n"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<JpegBk7252n>(ctx.name,
+                                             ctx.clock,
+                                             ctx.irq,
+                                             ctx.dma,
+                                             u32_param(ctx, "frame_interval_ms", 62),
+                                             u32_param(ctx, "encode_ms", 50),
+                                             picture_param(ctx),
+                                             u32_param(ctx, "burst_words", 64));
     };
     r["saradc"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Saradc>(ctx.name, ctx.irq, u32_param(ctx, "sample", 330));
+    };
+    r["saradc_bk7238"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<SaradcBk7238>(ctx.name, ctx.irq, u32_param(ctx, "sample", 330));
     };
     r["sdhost"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         uint32_t size = u32_param(ctx, "size", 0x100);
@@ -218,7 +245,8 @@ ModuleRegistry builtin_registry() {
                                        reset_words(ctx),
                                        reset_words(ctx, "warm_reset_words"),
                                        signal_specs(ctx),
-                                       read_adjust(ctx));
+                                       read_adjust(ctx),
+                                       reset_words(ctx, "self_clear"));
     };
     r["timer"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Timer>(ctx.name, ctx.clock, ctx.irq, u32_param(ctx, "hz", 26000000));
@@ -232,7 +260,8 @@ ModuleRegistry builtin_registry() {
     r["unknown"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         uint32_t size = u32_param(ctx, "size", 0x100);
         if (size == 0) bad(ctx, "size must not be 0");
-        return std::make_unique<Unknown>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction, log_level(ctx));
+        return std::make_unique<Unknown>(
+            ctx.name, size, reset_words(ctx), ctx.cpu_instruction, log_level(ctx), reset_words(ctx, "self_clear"));
     };
     r["wifi_mac"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         auto line = [&ctx](const char *key) {

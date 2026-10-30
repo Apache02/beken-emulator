@@ -49,7 +49,7 @@ struct CliOptions {
     bool help         = false; // -h/--help: print usage() and exit; nothing else is set
 };
 
-// PROFILE --load TARGET:FILE [--load ...] [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
+// PROFILE [--load TARGET:FILE]... [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
 //         [--i2c NAME=TYPE[@ADDRESS]]... [-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]]...
 //         [--ssid NAME | --wifi-ap SSID [--wifi-password PASS] [--wifi-channel N] [--wifi-internet]]
 //         [--pcap FILE] [--flash-mount [NAME=]FILE]... [--print-config]
@@ -59,8 +59,9 @@ struct CliOptions {
 // In `--flash-mount`, text before the first `=` is a module name only when it
 // is letters, digits and underscores; otherwise the whole value is the file.
 // Long options also take `--opt=value`. `--log-level` is repeatable; LEVEL is
-// debug, info, warning, error or none in any letter case. Throws CliError, e.g. `at
-// least one --load is required`, `--uart needs NAME=SPEC`, `--log-level needs
+// debug, info, warning, error or none in any letter case. At least one `--load`
+// or `--flash-mount` is needed. Throws CliError, e.g. `at least one --load or
+// --flash-mount is required`, `--uart needs NAME=SPEC`, `--log-level needs
 // NAME=LEVEL` or `--i2c needs NAME=TYPE[@ADDRESS]`; a
 // bad `--publish` gives the message of parse_publish. `--wifi-password` and
 // `--wifi-channel` and `--wifi-internet` need `--wifi-ap`, which excludes `--ssid`. Whether the

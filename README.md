@@ -49,7 +49,9 @@ over the network, on port 2323. Ctrl-C stops the emulator.
 executable (`<exe>/../profiles`) or in the directory named by
 `BKEMU_PROFILES`. `BK7252_4M` is the same chip with a 4 MiB flash; a profile
 takes another as its base with `extends = "BK7252"` and lists only what it
-changes (see `profiles/BK7252_4M.toml`). `--load TARGET:FILE` places an image: `bootloader` (flash
+changes (see `profiles/BK7252_4M.toml`). `BK7252N` is a different chip (the
+vendor SDK's SOC_BK7252N); its profile is a start, with stand-ins for the
+blocks whose registers differ from the BK7252 ones. `--load TARGET:FILE` places an image: `bootloader` (flash
 offset 0) and `app` (flash offset 0x11000) take CRC-protected `_crc.bin`
 images; `RAM`, `IRAM` and plain addresses are also accepted. On start the
 emulator prints where its UARTs are connected:
@@ -96,8 +98,11 @@ Without options the flash lives in memory and is gone when the emulator stops.
 
 ```
 build/bkemu BK7252 --flash-mount flash.bin --load bootloader:... --load app:...
-build/bkemu BK7252 --flash-mount flash.bin --load bootloader:...
+build/bkemu BK7252 --flash-mount flash.bin
 ```
+
+With an existing flash file no `--load` is needed: the second run boots
+whatever the file holds. A new file is blank, so creating one takes a `--load`.
 
 A missing file is created with the size of the flash (erased, all `0xFF`); an
 existing one must have that size and is what the flash holds at start. The

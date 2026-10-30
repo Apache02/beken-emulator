@@ -19,10 +19,11 @@ Sctrl::Sctrl(std::string                       name,
              std::map<uint32_t, uint32_t>      reset_words,
              std::map<uint32_t, uint32_t>      warm_reset_words,
              std::map<std::string, SignalSpec> signals,
-             std::vector<ReadAdjust>           read_adjust)
+             std::vector<ReadAdjust>           read_adjust,
+             std::map<uint32_t, uint32_t>      self_clear)
     : name_(std::move(name)), chip_id_(chip_id), device_id_(device_id), reset_words_(std::move(reset_words)),
       warm_reset_words_(std::move(warm_reset_words)), words_(reset_words_), signals_(std::move(signals)),
-      read_adjust_(std::move(read_adjust)) {}
+      read_adjust_(std::move(read_adjust)), self_clear_(std::move(self_clear)) {}
 
 uint32_t Sctrl::stored(uint32_t offset) const {
     auto it = words_.find(offset);
@@ -46,6 +47,7 @@ uint32_t Sctrl::read(const std::string &, uint32_t offset, uint32_t) {
 void Sctrl::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
     if (offset == kChipId || offset == kDeviceId) return;
     words_[offset] = value;
+    if (auto it = self_clear_.find(offset); it != self_clear_.end()) words_[offset] &= ~it->second;
     if (offset == kSleep && (value & kSleepModeMask) == kSleepModeDeep) deep_sleep_ = true;
 }
 

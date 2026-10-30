@@ -170,6 +170,22 @@ TEST_CASE("sctrl: the deep sleep word in the sleep register is noted until reset
     CHECK_FALSE(s.deep_sleep());
 }
 
+TEST_CASE("sctrl self_clear bits read 0 after a write, the other bits are kept") {
+    Sctrl s("sctrl",
+            0,
+            0,
+            {
+    },
+            {},
+            {},
+            {},
+            {{0x74, 0x1}});
+    w(s, 0x74, 0x00000501);
+    CHECK(r(s, 0x74) == 0x00000500);
+    w(s, 0x78, 0x1);
+    CHECK(r(s, 0x78) == 0x1);
+}
+
 TEST_CASE("sctrl unknown signal is refused") {
     Sctrl s = make();
     CHECK_THROWS_WITH_AS(s.signal("nope"), "sctrl: no signal nope", std::invalid_argument);

@@ -17,6 +17,7 @@
 #include "app/config_report.h"
 #include "app/endpoints.h"
 #include "app/registry.h"
+#include "app/stop_report.h"
 #include "core/loader.h"
 #include "core/log.h"
 #include "core/machine.h"
@@ -100,6 +101,11 @@ int run(int argc, char **argv) {
         std::cerr,
         bk::colour_enabled(::isatty(STDERR_FILENO) != 0, std::getenv("NO_COLOR"), std::getenv("FORCE_COLOR")));
     for (const auto &[name, level] : options.log_levels) bk::Logger::set_level(name, level);
+    // A new flash file is blank, so without a load there would be nothing to run.
+    if (options.loads.empty())
+        for (const auto &[name, file] : options.flash_mounts)
+            if (!std::filesystem::exists(file))
+                throw std::invalid_argument("flash file " + file + " does not exist; a new one needs --load");
 
     bk::Profile profile = bk::load_profile(options.profile, bk::profile_dir(executable_path(argv[0])));
     // The devices outlive the machine that talks to them.
@@ -209,6 +215,12 @@ int run(int argc, char **argv) {
         if (auto *uart = dynamic_cast<bk::Uart *>(machine.module(name))) uart->flush();
     if (sctrl && sctrl->deep_sleep())
         std::cout << "The firmware put the chip into deep sleep; wake-up is not emulated, stopping." << std::endl;
+    // A stdio terminal may still be raw, where a newline does not return the
+    // carriage.
+    std::string report = bk::stop_report(profile, machine);
+    if (::isatty(STDERR_FILENO))
+        for (size_t at = 0; (at = report.find('\n', at)) != std::string::npos; at += 2) report.insert(at, 1, '\r');
+    std::cerr << report << std::flush;
 
     if (mac) mac->attach(nullptr);
     if (network) network->close();

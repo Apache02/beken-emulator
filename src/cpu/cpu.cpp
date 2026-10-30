@@ -16,6 +16,9 @@ constexpr uint32_t kIntnoSwi = 2;
 // Fixed instruction cost charged for every exception taken inside a slice,
 // since Unicorn does not report how many instructions actually ran.
 constexpr int64_t kExceptionCost = 50;
+// How many instructions after a woken wait run one at a time, waiting for the
+// firmware to unmask the pending interrupt.
+constexpr uint32_t kWakeSteps = 4096;
 
 // MCR p15, 0, r0, c7, c0, 4: wait for interrupt.
 constexpr uint32_t kWfiArm     = 0xEE070F90;
@@ -138,9 +141,10 @@ std::pair<RunResult, uint32_t> Cpu::run(uint32_t budget) {
 
     int64_t remaining = budget;
     for (;;) {
-        const uint32_t start = reg(Reg::PC) | (thumb() ? 1u : 0u);
+        const bool     stepping = wake_steps_ > 0;
+        const uint32_t start    = reg(Reg::PC) | (thumb() ? 1u : 0u);
         bad_intno_.reset();
-        const uc_err err = uc_emu_start(uc_, start, 0xFFFFFFFF, 0, static_cast<size_t>(remaining));
+        const uc_err err = uc_emu_start(uc_, start, 0xFFFFFFFF, 0, stepping ? 1 : static_cast<size_t>(remaining));
         if (err != UC_ERR_OK && !pending_) {
             if (err == UC_ERR_INSN_INVALID)
                 pending_ = Pending{Exc::Undef, reg(Reg::PC)};
@@ -161,13 +165,27 @@ std::pair<RunResult, uint32_t> Cpu::run(uint32_t budget) {
             continue;
         }
 
-        if (!restart_) break;
-        restart_ = false;
-        // Blocks translated before a new hook was installed would not call it.
-        check(uc_ctl_flush_tb(uc_), "flush translation cache");
+        if (restart_) {
+            restart_ = false;
+            // Blocks translated before a new hook was installed would not call it.
+            check(uc_ctl_flush_tb(uc_), "flush translation cache");
+            if (!stepping) continue;
+        }
+        if (!stepping) break;
+        --wake_steps_;
+        if (!irq_ && !fiq_) wake_steps_ = 0;
+        if (take_pending(reg(Reg::PC))) {
+            wake_steps_ = 0;
+            remaining -= kExceptionCost;
+        }
+        if (--remaining <= 0) return {RunResult::Budget, budget};
     }
 
-    if (at_wait_for_interrupt()) return {RunResult::Idle, 1};
+    if (at_wait_for_interrupt()) {
+        if (!irq_ && !fiq_) return {RunResult::Idle, 1};
+        wake_steps_ = kWakeSteps;
+        return {RunResult::Budget, 1};
+    }
     return {RunResult::Budget, budget};
 }
 

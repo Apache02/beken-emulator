@@ -9,7 +9,9 @@
 
 namespace bk {
 
-// Interrupt controller: source bits 0-15 request IRQ, 16-31 request FIQ.
+// Interrupt controller: source bits 0-15 request IRQ, 16-31 request FIQ. At
+// DEBUG (logger "intc") it logs source line changes, writes of the enable,
+// global and clear registers, and changes of the IRQ and FIQ lines to the CPU.
 class Intc : public Module {
   public:
     Intc(std::string                       name,
@@ -49,6 +51,7 @@ class Intc : public Module {
     std::map<std::string, SignalSpec> signals_;
     std::vector<LineState>            lines_;
     uint32_t                          latched_ = 0, enable_ = 0, global_ = 0;
+    bool                              irq_out_ = false, fiq_out_ = false; // the lines to the CPU, for the log
 };
 
 } // namespace bk

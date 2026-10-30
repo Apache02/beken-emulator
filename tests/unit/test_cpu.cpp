@@ -307,6 +307,26 @@ TEST_CASE("wfi returns Idle") {
     CHECK(f.pc() == 0x108);
 }
 
+TEST_CASE("an interrupt masked at wfi is taken once the firmware unmasks it") {
+    // An idle loop that unmasks only between two masked waits: the slice
+    // always ends at the wait with I set.
+    constexpr uint32_t kMsrSys = 0xE321F01F, kMsrSysMasked = 0xE321F09F; // msr cpsr_c, #imm
+    Fixture            f;
+    f.put(0x100, kWfi);
+    f.put(0x104, kMsrSys);
+    f.put(0x108, kMsrSysMasked);
+    f.put(0x10C, b(0x10C, 0x100));
+    f.cpu.set_reg(Reg::CPSR, kSys | kI);
+    f.cpu.raise_irq(true);
+    // The wait does not idle while an interrupt is pending.
+    CHECK(f.cpu.run(1000) == Result{RunResult::Budget, 1});
+    CHECK(f.pc() == 0x104);
+    f.cpu.run(1000);
+    CHECK((f.cpsr() & 0x1F) == kIrq);
+    CHECK(f.cpu.reg(Reg::SPSR) == kSys);
+    CHECK(f.cpu.reg(Reg::LR) == 0x10C); // the masking instruction runs after the handler
+}
+
 TEST_CASE("wfi recognised only in the r0 form") {
     Fixture f;
     f.put(0x100, kWfiR1);

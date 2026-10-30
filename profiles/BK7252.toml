@@ -329,7 +329,6 @@ intc = "ICU"
 irq = 2
 ref_hz = 26000000
 
-# Not random: data reads count 0, 1, 2, ... and the generator starts enabled.
 [[module]]
 type = "i2c2"
 name = "I2C2"

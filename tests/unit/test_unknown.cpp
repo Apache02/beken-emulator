@@ -122,3 +122,30 @@ TEST_CASE("unknown reset restores the start values") {
     CHECK(f.r(0x08) == 7);
     CHECK(f.r(0x10) == 0);
 }
+
+TEST_CASE("unknown self_clear bits read 0 after a write, the other bits are kept") {
+    Unknown block("BLK",
+                  0x40,
+                  {
+    },
+                  nullptr,
+                  Level::None,
+                  {{0x08, 0x80000000}});
+    block.write("regs", 0x08, 4, 0x90F8FFA7);
+    CHECK(block.read("regs", 0x08, 4) == 0x10F8FFA7);
+    block.write("regs", 0x0B, 1, 0xFF); // a byte write to the top byte
+    CHECK(block.read("regs", 0x08, 4) == 0x7FF8FFA7);
+    block.write("regs", 0x0C, 4, 0x80000000);
+    CHECK(block.read("regs", 0x0C, 4) == 0x80000000);
+}
+
+TEST_CASE("unknown self_clear offsets must be words inside the block") {
+    CHECK_THROWS_AS(Unknown("BLK",
+                            0x40,
+                            {
+    },
+                            nullptr,
+                            Level::None,
+                            {{0x40, 1}}),
+                    std::invalid_argument);
+}

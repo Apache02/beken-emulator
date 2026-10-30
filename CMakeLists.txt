@@ -34,17 +34,23 @@ add_library(bk_core STATIC
         src/app/registry.cpp
         src/app/cli.cpp
         src/app/config_report.cpp
+        src/app/stop_report.cpp
         src/app/endpoints.cpp
         src/periph/flash.cpp
         src/i2c/catalog.cpp
         src/i2c/register_device.cpp
         src/periph/gdma.cpp
+        src/periph/gdma_bk7252n.cpp
+        src/periph/gdma_engine.cpp
         src/periph/gpio.cpp
         src/periph/i2c1.cpp
         src/periph/i2c2.cpp
         src/periph/intc.cpp
         src/periph/jpeg.cpp
+        src/periph/jpeg_bk7252n.cpp
+        src/periph/jpeg_stream.cpp
         src/periph/saradc.cpp
+        src/periph/saradc_bk7238.cpp
         src/periph/sctrl.cpp
         src/periph/timer.cpp
         src/periph/trng.cpp
@@ -84,7 +90,9 @@ add_executable(unit_tests
         tests/unit/test_sctrl.cpp
         tests/unit/test_gpio.cpp
         tests/unit/test_gdma.cpp
+        tests/unit/test_gdma_bk7252n.cpp
         tests/unit/test_jpeg.cpp
+        tests/unit/test_jpeg_bk7252n.cpp
         tests/unit/test_wifi_mac.cpp
         tests/unit/test_wifi_frame_engine.cpp
         tests/unit/test_station.cpp
@@ -105,6 +113,7 @@ add_executable(unit_tests
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp
         tests/unit/test_saradc.cpp
+        tests/unit/test_saradc_bk7238.cpp
         tests/unit/test_sdhost.cpp
         tests/unit/test_unknown.cpp
         tests/unit/test_timer.cpp
@@ -117,6 +126,7 @@ add_executable(unit_tests
         tests/unit/test_loader.cpp
         tests/unit/test_cli.cpp
         tests/unit/test_config_report.cpp
+        tests/unit/test_stop_report.cpp
         tests/unit/test_endpoints.cpp
         tests/unit/test_executable.cpp
         tests/unit/test_unicorn_smoke.cpp)
