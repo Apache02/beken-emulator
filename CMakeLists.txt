@@ -52,6 +52,7 @@ add_library(bk_core STATIC
         src/periph/saradc.cpp
         src/periph/saradc_bk7238.cpp
         src/periph/sctrl.cpp
+        src/periph/efuse.cpp
         src/periph/timer.cpp
         src/periph/trng.cpp
         src/periph/uart.cpp
@@ -88,6 +89,7 @@ add_executable(unit_tests
         tests/unit/test_log.cpp
         tests/unit/test_intc.cpp
         tests/unit/test_sctrl.cpp
+        tests/unit/test_efuse.cpp
         tests/unit/test_gpio.cpp
         tests/unit/test_gdma.cpp
         tests/unit/test_gdma_bk7252n.cpp

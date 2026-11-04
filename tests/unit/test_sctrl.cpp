@@ -170,20 +170,20 @@ TEST_CASE("sctrl: the deep sleep word in the sleep register is noted until reset
     CHECK_FALSE(s.deep_sleep());
 }
 
-TEST_CASE("sctrl self_clear bits read 0 after a write, the other bits are kept") {
-    Sctrl s("sctrl",
-            0,
-            0,
-            {
-    },
-            {},
-            {},
-            {},
-            {{0x74, 0x1}});
+TEST_CASE("sctrl serves the eFuse registers") {
+    Sctrl s = make({
+        {0x74, 0xFFFFFFFE},
+        {0x78, 0xFFFFFFFF}
+    });
+    CHECK(r(s, 0x74) == 0);
+    CHECK(r(s, 0x78) == 0);
+    w(s, 0x74, 0x00A50503); // write 0xA5 to byte 5
+    CHECK(r(s, 0x74) == 0x00A50502);
+    w(s, 0x74, 0x00000501); // read byte 5
+    CHECK(r(s, 0x78) == 0x1A5);
+    s.reset();
     w(s, 0x74, 0x00000501);
-    CHECK(r(s, 0x74) == 0x00000500);
-    w(s, 0x78, 0x1);
-    CHECK(r(s, 0x78) == 0x1);
+    CHECK(r(s, 0x78) == 0x1A5);
 }
 
 TEST_CASE("sctrl unknown signal is refused") {

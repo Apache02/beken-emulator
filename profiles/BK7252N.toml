@@ -80,9 +80,6 @@ read_adjust = [{ offset = 0x008, shift = 4, width = 4, add = 1 }]
 # Register fields other modules watch. power_mac_modem: the upper half is the MAC
 # key (1 powers the MAC up, 0xD802 powers it down).
 signals = { mac_powered = { offset = 0x10c, shift = 16, width = 16, equals = 1 } }
-# efuse_ctrl.oper_en: an eFuse operation completes at once. Its read data
-# (efuse_optr) is never valid, which the firmware takes for a blank byte.
-self_clear = { "0x074" = 0x1 }
 # Measured on the BK7221U; the BK7252N values are not known yet.
 [module.params.reset_words]
 "0x008" = 0x00020000  # control: DCO main clock

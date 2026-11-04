@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "core/module.h"
+#include "periph/efuse.h"
 
 namespace bk {
 
@@ -20,9 +21,8 @@ struct ReadAdjust {
 // System control: chip identity plus plain 32-bit words. Writing the deep sleep
 // word to the sleep register (the firmware's last step into deep sleep, where
 // the chip powers down until a wake-up) is noted for whoever runs the machine;
-// nothing else happens, and wake-up is not emulated. `self_clear` maps an
-// offset to the bits that read 0 after any write: a command bit whose
-// operation completes at once.
+// nothing else happens, and wake-up is not emulated. The eFuse words are
+// served by an Efuse; reset words at their offsets are ignored.
 class Sctrl : public Module {
   public:
     Sctrl(std::string                       name,
@@ -31,8 +31,7 @@ class Sctrl : public Module {
           std::map<uint32_t, uint32_t>      reset_words,
           std::map<uint32_t, uint32_t>      warm_reset_words,
           std::map<std::string, SignalSpec> signals,
-          std::vector<ReadAdjust>           read_adjust,
-          std::map<uint32_t, uint32_t>      self_clear = {});
+          std::vector<ReadAdjust>           read_adjust);
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {
@@ -58,7 +57,7 @@ class Sctrl : public Module {
     std::map<uint32_t, uint32_t>      reset_words_, warm_reset_words_, words_;
     std::map<std::string, SignalSpec> signals_;
     std::vector<ReadAdjust>           read_adjust_;
-    std::map<uint32_t, uint32_t>      self_clear_;
+    Efuse                             efuse_;
     bool                              deep_sleep_ = false;
 };
 

@@ -19,11 +19,10 @@ Sctrl::Sctrl(std::string                       name,
              std::map<uint32_t, uint32_t>      reset_words,
              std::map<uint32_t, uint32_t>      warm_reset_words,
              std::map<std::string, SignalSpec> signals,
-             std::vector<ReadAdjust>           read_adjust,
-             std::map<uint32_t, uint32_t>      self_clear)
+             std::vector<ReadAdjust>           read_adjust)
     : name_(std::move(name)), chip_id_(chip_id), device_id_(device_id), reset_words_(std::move(reset_words)),
       warm_reset_words_(std::move(warm_reset_words)), words_(reset_words_), signals_(std::move(signals)),
-      read_adjust_(std::move(read_adjust)), self_clear_(std::move(self_clear)) {}
+      read_adjust_(std::move(read_adjust)) {}
 
 uint32_t Sctrl::stored(uint32_t offset) const {
     auto it = words_.find(offset);
@@ -33,6 +32,7 @@ uint32_t Sctrl::stored(uint32_t offset) const {
 uint32_t Sctrl::read(const std::string &, uint32_t offset, uint32_t) {
     if (offset == kChipId) return chip_id_;
     if (offset == kDeviceId) return device_id_;
+    if (offset == Efuse::kCtrl || offset == Efuse::kOptr) return efuse_.read(offset);
     uint32_t value = stored(offset);
     for (const ReadAdjust &a : read_adjust_) {
         if (a.offset != offset) continue;
@@ -46,14 +46,15 @@ uint32_t Sctrl::read(const std::string &, uint32_t offset, uint32_t) {
 
 void Sctrl::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
     if (offset == kChipId || offset == kDeviceId) return;
+    if (offset == Efuse::kCtrl || offset == Efuse::kOptr) return efuse_.write(offset, value);
     words_[offset] = value;
-    if (auto it = self_clear_.find(offset); it != self_clear_.end()) words_[offset] &= ~it->second;
     if (offset == kSleep && (value & kSleepModeMask) == kSleepModeDeep) deep_sleep_ = true;
 }
 
 void Sctrl::reset() {
     deep_sleep_ = false;
-    words_      = reset_words_;
+    efuse_.reset();
+    words_ = reset_words_;
     for (const auto &[offset, value] : warm_reset_words_) words_[offset] = value;
 }
 
