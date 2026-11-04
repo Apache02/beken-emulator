@@ -1,0 +1,28 @@
+This project's own code is licensed under the MIT License (see LICENSE).
+The files listed below are either third-party material or contain it, and are
+NOT fully covered by it.
+
+Firmware images in firmware/
+----------------------------
+All images were built from https://github.com/Apache02/bk7252-cam (MIT) and
+are this project's author's own work, with one exception:
+
+  firmware/A9_B_V1_3-camera-v0.1.0-uart2_crc.bin
+      The camera application. It links Beken's WiFi MAC/LMAC library
+      (libip_7221u.a), Copyright (c) Beken Corporation. No license is granted
+      by this project for that part of the image.
+
+The other images (bootloader_*_crc.bin, app_crc.bin, test_*_iram.bin) contain
+no Beken code and are covered by the MIT License.
+
+data/picture.jpg was generated for this project and is covered by the MIT
+License.
+
+Downloaded at build time (not stored in this repository)
+--------------------------------------------------------
+Unicorn Engine    GPL-2.0
+toml++            MIT
+doctest           MIT
+
+The bkemu executable links Unicorn, so a built bkemu binary as a whole is
+distributed under GPL-2.0. The source code in this repository stays MIT.
