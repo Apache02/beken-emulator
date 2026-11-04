@@ -236,7 +236,7 @@ ModuleRegistry builtin_registry() {
     r["sdhost"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         uint32_t size = u32_param(ctx, "size", 0x100);
         if (size <= SdHost::kStatus) bad(ctx, "size must cover the status register");
-        return std::make_unique<SdHost>(ctx.name, size, reset_words(ctx), ctx.cpu_instruction, log_level(ctx));
+        return std::make_unique<SdHost>(ctx.name, size, reset_words(ctx), ctx.cpu_site, log_level(ctx));
     };
     r["sctrl"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Sctrl>(ctx.name,
@@ -260,7 +260,7 @@ ModuleRegistry builtin_registry() {
         uint32_t size = u32_param(ctx, "size", 0x100);
         if (size == 0) bad(ctx, "size must not be 0");
         return std::make_unique<Unknown>(
-            ctx.name, size, reset_words(ctx), ctx.cpu_instruction, log_level(ctx), reset_words(ctx, "self_clear"));
+            ctx.name, size, reset_words(ctx), ctx.cpu_site, log_level(ctx), reset_words(ctx, "self_clear"));
     };
     r["wifi_mac"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         auto line = [&ctx](const char *key) {
@@ -278,7 +278,7 @@ ModuleRegistry builtin_registry() {
                                          ctx.clock,
                                          ctx.signal("mac_powered"),
                                          std::move(lines),
-                                         ctx.cpu_instruction,
+                                         ctx.cpu_site,
                                          *ctx.memory,
                                          log_level(ctx));
     };

@@ -69,6 +69,9 @@ class Cpu {
     // The instruction at pc; inside a memory callback that is the one making
     // the access. Empty when it cannot be read.
     std::optional<Instruction> instruction();
+    // pc and lr; inside a memory callback pc is the instruction making the
+    // access.
+    CodeSite site();
 
     uint32_t reg(Reg r);
     void     set_reg(Reg r, uint32_t value);

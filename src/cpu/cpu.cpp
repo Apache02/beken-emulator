@@ -231,6 +231,8 @@ std::optional<Instruction> Cpu::instruction() {
     return Instruction{pc, opcode, width};
 }
 
+CodeSite Cpu::site() { return CodeSite{reg(Reg::PC), reg(Reg::LR)}; }
+
 uint32_t Cpu::reg(Reg r) {
     uint32_t v = 0;
     check(uc_reg_read(uc_, uc_reg_id(r), &v), "register read");

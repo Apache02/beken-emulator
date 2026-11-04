@@ -12,10 +12,10 @@ namespace bk {
 Unknown::Unknown(std::string                  name,
                  uint32_t                     size,
                  std::map<uint32_t, uint32_t> reset_words,
-                 InstructionSource            instruction,
+                 SiteSource                   site,
                  Level                        level,
                  std::map<uint32_t, uint32_t> self_clear)
-    : name_(std::move(name)), size_(size), reset_words_(std::move(reset_words)), instruction_(std::move(instruction)),
+    : name_(std::move(name)), size_(size), reset_words_(std::move(reset_words)), site_(std::move(site)),
       level_(level), self_clear_(std::move(self_clear)), words_((uint64_t{size} + 3) / 4, 0) {
     auto check = [this](const std::map<uint32_t, uint32_t> &words, const char *what) {
         for (const auto &[offset, word] : words) {
@@ -60,26 +60,16 @@ void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t 
     if (level_ == Level::None) return;
 
     char text[160];
-    int  n = std::snprintf(text,
-                          sizeof text,
-                          "%s %s +0x%04X (%u bytes) = 0x%0*X",
-                          name_.c_str(),
-                          what,
-                          offset,
-                          size,
-                          static_cast<int>(size * 2),
-                          value);
-    if (instruction_) {
-        if (std::optional<Instruction> insn = instruction_()) {
-            std::snprintf(text + n,
-                          sizeof text - static_cast<size_t>(n),
-                          "  pc 0x%08X opcode %0*X",
-                          insn->pc,
-                          static_cast<int>(insn->width * 2),
-                          insn->opcode);
-        }
-    }
-    Logger::get("unknown").log(level_, text);
+    std::snprintf(text,
+                  sizeof text,
+                  "%s %s +0x%04X (%u bytes) = 0x%0*X",
+                  name_.c_str(),
+                  what,
+                  offset,
+                  size,
+                  static_cast<int>(size * 2),
+                  value);
+    Logger::get("unknown").log(level_, site_ ? text + by_site(site_()) : std::string(text));
 }
 
 } // namespace bk

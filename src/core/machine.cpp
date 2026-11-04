@@ -68,8 +68,8 @@ void Machine::add_module(const ModuleSpec &spec, const ModuleRegistry &registry,
                       nullptr,
                       {},
                       {}};
-    ctx.cpu_instruction = [this] { return cpu_.instruction(); };
-    ctx.memory          = &bus_.memory();
+    ctx.cpu_site = [this] { return cpu_.site(); };
+    ctx.memory   = &bus_.memory();
     if (auto e = endpoints.find(spec.name); e != endpoints.end()) ctx.endpoint = e->second;
 
     if (const ParamValue *intc = ctx.params.find("intc")) {

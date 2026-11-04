@@ -31,6 +31,15 @@ struct Instruction {
     unsigned width;
 };
 
+// Where the CPU makes an access from: the instruction's address and the link
+// register (the caller, while the access is made in a leaf function).
+struct CodeSite {
+    uint32_t pc, lr;
+};
+
+// " by pc 0x..., lr 0x...": the ending of every log line about a CPU access.
+std::string by_site(const CodeSite &site);
+
 // Thrown by BusMemory when a bus master (a DMA engine) touches an address that
 // nothing readable or writable answers at.
 struct BusError : std::runtime_error {

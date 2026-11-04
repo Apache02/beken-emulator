@@ -54,7 +54,7 @@ WifiMac::WifiMac(std::string                name,
                  const Clock               &clock,
                  Signal                     powered,
                  Lines                      lines,
-                 Unknown::InstructionSource instruction,
+                 Unknown::SiteSource        site,
                  BusMemory                 &memory,
                  Level                      bank_log_level)
     : name_(std::move(name)), clock_(clock), powered_(std::move(powered)), lines_(std::move(lines)),
@@ -63,10 +63,10 @@ WifiMac::WifiMac(std::string                name,
             {
                 {kVersion, 0x00001C03}
 },
-            instruction,
+            site,
             bank_log_level),
-      pl_(name_ + "_PL", kPlSize, {}, instruction, bank_log_level),
-      pta_(name_ + "_PTA", kPtaSize, {}, instruction, bank_log_level),
+      pl_(name_ + "_PL", kPlSize, {}, site, bank_log_level),
+      pta_(name_ + "_PTA", kPtaSize, {}, site, bank_log_level),
       engine_(
           memory,
           [this](std::span<const uint8_t> frame) {

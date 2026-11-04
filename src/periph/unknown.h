@@ -15,26 +15,25 @@ namespace bk {
 // A stand-in for a block of registers that is not emulated yet: 32-bit
 // registers that read back what was written, and a log line (INFO unless the
 // owner picks another level) for every access with the offset, the value and,
-// when an instruction source is given,
-// the address and opcode of the instruction that made it, so the log shows
+// when a site source is given, the pc and lr it was made from, so the log shows
 // which stand-ins a firmware uses.
 //
 // The bus reaches a module with whole words at word addresses only (it widens
 // narrow loads and stores itself); a read past the end of the block returns 0.
 class Unknown : public Module {
   public:
-    using InstructionSource = std::function<std::optional<Instruction>()>;
+    using SiteSource = std::function<CodeSite()>;
 
     // `size` is in bytes (rounded up to whole words). `reset_words` maps a
     // word-aligned offset inside the block to its start value; throws
-    // std::invalid_argument for any other offset. `instruction` may be empty.
+    // std::invalid_argument for any other offset. `site` may be empty.
     // `level` is the level of the access log lines. `self_clear` maps an offset
     // (checked as `reset_words`) to the bits that read 0 after any write: a
     // command bit whose operation completes at once.
     Unknown(std::string                  name,
             uint32_t                     size,
             std::map<uint32_t, uint32_t> reset_words,
-            InstructionSource            instruction,
+            SiteSource                   site,
             Level                        level      = Level::Info,
             std::map<uint32_t, uint32_t> self_clear = {});
 
@@ -65,7 +64,7 @@ class Unknown : public Module {
     std::string                  name_;
     uint32_t                     size_;
     std::map<uint32_t, uint32_t> reset_words_;
-    InstructionSource            instruction_;
+    SiteSource                   site_;
     Level                        level_;
     std::map<uint32_t, uint32_t> self_clear_;
     std::vector<uint32_t>        words_;

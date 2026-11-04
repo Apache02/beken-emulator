@@ -361,6 +361,33 @@ TEST_CASE("unmapped access aborts") {
     }
 }
 
+TEST_CASE("bus access log lines end with the pc and lr of the access") {
+    Fixture f;
+    auto    logged = [&f](const std::string &line) { return f.out.str().find(line + "\n") != std::string::npos; };
+    SUBCASE("unmapped access") {
+        f.program({kLdrR1R2});
+        f.cpu.set_reg(Reg::R2, 0x00300010);
+        f.cpu.set_reg(Reg::LR, 0x00001234);
+        CHECK(f.run() == kOk);
+        CHECK(logged("bus error: unmapped access at 0x00300010 by pc 0x00000100, lr 0x00001234"));
+    }
+    SUBCASE("unmapped fetch has no pc of its own") {
+        f.program({kBxR2});
+        f.cpu.set_reg(Reg::R2, 0x00300040);
+        f.cpu.set_reg(Reg::LR, 0x00001234);
+        CHECK(f.run() == kOk);
+        CHECK(logged("bus error: unmapped fetch at 0x00300040, lr 0x00001234"));
+    }
+    SUBCASE("unclaimed peripheral") {
+        f.program({kLdrR1R2, kStrR1R2});
+        f.cpu.set_reg(Reg::R2, 0x00800100);
+        f.cpu.set_reg(Reg::LR, 0x00001234);
+        CHECK(f.run() == kOk);
+        CHECK(logged("unclaimed peripheral read at 0x00800100 by pc 0x00000100, lr 0x00001234"));
+        CHECK(logged("unclaimed peripheral write at 0x00800100 by pc 0x00000104, lr 0x00001234"));
+    }
+}
+
 TEST_CASE("fetch from non executable memory is pabt") {
     Fixture f;
     f.program({kBxR2});
@@ -611,8 +638,8 @@ struct MirrorFixture {
         std::vector<uint8_t> b = cpu.mem_read(addr, 4);
         return b[0] | b[1] << 8 | b[2] << 16 | static_cast<uint32_t>(b[3]) << 24;
     }
-    // Runs `code` from 0x100 with r2 = `r2`, r4 = `r4`, r1 = `r1`.
-    void run(std::vector<uint32_t> code, uint32_t r1, uint32_t r2, uint32_t r4 = 0) {
+    // Runs `code` from 0x100 with r2 = `r2`, r4 = `r4`, r1 = `r1`, lr = `lr`.
+    void run(std::vector<uint32_t> code, uint32_t r1, uint32_t r2, uint32_t r4 = 0, uint32_t lr = 0) {
         uint32_t a = 0x100;
         for (uint32_t w : code) put(a, w), a += 4;
         put(a, b(a, a));
@@ -622,11 +649,20 @@ struct MirrorFixture {
         cpu.set_reg(Reg::R1, r1);
         cpu.set_reg(Reg::R2, r2);
         cpu.set_reg(Reg::R4, r4);
+        cpu.set_reg(Reg::LR, lr);
         cpu.run(static_cast<uint32_t>(code.size()) + 1);
     }
 };
 
 } // namespace
+
+TEST_CASE("a mirror access is logged with the pc and lr of the access") {
+    using F = MirrorFixture;
+    F f;
+    f.run({kLdrR3R2}, 0, F::kBase + F::kSize + 0x40, 0, 0x00001234);
+    CHECK(f.out.str().find("read of 4 bytes at 0x00410040 is in a mirror of ram: it reaches 0x00400040 by pc "
+                           "0x00000100, lr 0x00001234\n") != std::string::npos);
+}
 
 TEST_CASE("a mirror reaches the same bytes") {
     using F = MirrorFixture;

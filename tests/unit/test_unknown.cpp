@@ -14,15 +14,15 @@ using namespace bk;
 namespace {
 
 struct Fixture {
-    std::ostringstream         out;
-    std::optional<Instruction> insn;
-    Unknown                    block;
+    std::ostringstream out;
+    CodeSite           site{};
+    Unknown            block;
 
     explicit Fixture(uint32_t size = 0x100, std::map<uint32_t, uint32_t> words = {}, bool with_source = true)
         : block("BLK",
                 size,
                 std::move(words),
-                with_source ? Unknown::InstructionSource([this] { return insn; }) : nullptr) {
+                with_source ? Unknown::SiteSource([this] { return site; }) : nullptr) {
         Logger::reset_for_tests();
         Logger::configure(out, false);
     }
@@ -121,6 +121,23 @@ TEST_CASE("unknown reset restores the start values") {
     f.block.reset();
     CHECK(f.r(0x08) == 7);
     CHECK(f.r(0x10) == 0);
+}
+
+TEST_CASE("unknown logs every access with the pc and lr that made it") {
+    Fixture f;
+    f.site = {0x00087828, 0x00087801};
+    f.w(0x10, 0xAB);
+    f.r(0x10);
+    CHECK(f.out.str().find("BLK write +0x0010 (4 bytes) = 0x000000AB by pc 0x00087828, lr 0x00087801\n") !=
+          std::string::npos);
+    CHECK(f.out.str().find("BLK read +0x0010 (4 bytes) = 0x000000AB by pc 0x00087828, lr 0x00087801\n") !=
+          std::string::npos);
+}
+
+TEST_CASE("unknown without a site source logs the access alone") {
+    Fixture f(0x100, {}, false);
+    f.w(0x04, 1);
+    CHECK(f.out.str().find("BLK write +0x0004 (4 bytes) = 0x00000001\n") != std::string::npos);
 }
 
 TEST_CASE("unknown self_clear bits read 0 after a write, the other bits are kept") {

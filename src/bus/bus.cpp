@@ -215,6 +215,8 @@ void Bus::write_memory(uint32_t addr, std::span<const uint8_t> data) {
 BusError::BusError(uint32_t a, const std::string &reason)
     : std::runtime_error(format("bus error at 0x%08X: ", a) + reason), addr(a) {}
 
+std::string by_site(const CodeSite &site) { return format(" by pc 0x%08X, lr 0x%08X", site.pc, site.lr); }
+
 std::vector<uint8_t> Bus::read_chunk(uint32_t addr, uint32_t size) {
     for (const MemRegion &r : regions_) {
         if (addr >= r.base && addr < uint64_t{r.base} + r.size) {
@@ -299,7 +301,7 @@ uint32_t Bus::read(uint32_t addr, unsigned size) {
     const Slot *s = find(addr);
     if (!s) {
         if (unclaimed_read_.insert(addr).second)
-            log_.log(Level::Warning, format("unclaimed peripheral read at 0x%08X", addr));
+            log_.log(Level::Warning, format("unclaimed peripheral read at 0x%08X", addr) + by_site(cpu_.site()));
         return 0;
     }
     // A register answers every read with its whole word and the core picks the bytes it asked for
@@ -323,7 +325,7 @@ void Bus::write(uint32_t addr, unsigned size, uint32_t value) {
     const Slot *s = find(addr);
     if (!s) {
         if (unclaimed_write_.insert(addr).second)
-            log_.log(Level::Warning, format("unclaimed peripheral write at 0x%08X", addr));
+            log_.log(Level::Warning, format("unclaimed peripheral write at 0x%08X", addr) + by_site(cpu_.site()));
         return;
     }
     // A register is written as a whole word with no byte enables: the core repeats a byte or
@@ -363,8 +365,8 @@ const Bus::Mirror *Bus::find_mirror(uint32_t addr) const {
 }
 
 void Bus::mirror_warning(const Mirror &m, uint32_t addr, unsigned size, bool write, bool master) {
-    const uint32_t pc  = cpu_.reg(Reg::PC);
-    const uint64_t key = uint64_t{master ? addr >> 12 : pc} << 2 | uint64_t{master} << 1 | write;
+    const CodeSite site = cpu_.site();
+    const uint64_t key  = uint64_t{master ? addr >> 12 : site.pc} << 2 | uint64_t{master} << 1 | write;
     if (!mirror_warned_.insert(key).second) return;
     const uint32_t target = unmirror(m, addr);
     const char    *what   = write ? "write" : "read";
@@ -378,13 +380,13 @@ void Bus::mirror_warning(const Mirror &m, uint32_t addr, unsigned size, bool wri
                         target));
     else
         log_.log(Level::Warning,
-                 format("%s of %u bytes at 0x%08X is in a mirror of %s: it reaches 0x%08X; pc 0x%08X",
+                 format("%s of %u bytes at 0x%08X is in a mirror of %s: it reaches 0x%08X",
                         what,
                         size,
                         addr,
                         m.name.c_str(),
-                        target,
-                        pc));
+                        target) +
+                     by_site(site));
 }
 
 // The bytes of one access may run past the end of a copy into the next one,
@@ -417,9 +419,13 @@ void Bus::mirror_write(uc_engine *, uint64_t offset, unsigned size, uint64_t val
 
 void Bus::bus_error(uint32_t addr, bool fetch) {
     auto &seen = fetch ? bad_fetch_pages_ : bad_access_pages_;
-    if (seen.insert(addr >> 12).second)
+    if (seen.insert(addr >> 12).second) {
+        // A fetch's pc is the address itself; lr often names the code that jumped there.
+        const CodeSite site = cpu_.site();
         log_.log(Level::Error,
-                 format(fetch ? "bus error: unmapped fetch at 0x%08X" : "bus error: unmapped access at 0x%08X", addr));
+                 fetch ? format("bus error: unmapped fetch at 0x%08X, lr 0x%08X", addr, site.lr)
+                       : format("bus error: unmapped access at 0x%08X", addr) + by_site(site));
+    }
     cpu_.post_fault(fetch ? Fault::Kind::Pabt : Fault::Kind::Dabt);
 }
 
