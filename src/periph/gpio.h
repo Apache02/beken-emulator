@@ -13,14 +13,17 @@
 namespace bk {
 
 // GPIO: 40 pins in two banks, each with a config word, plus interrupt
-// registers. Peripheral functions are not modelled.
+// registers. Peripheral functions are not modelled. A write that changes a
+// pin's mode (output, input, peripheral function or disabled, and its pull) is
+// logged at INFO; a change of the output level alone is not.
 class Gpio : public Module {
   public:
     static constexpr unsigned kPins = 40;
 
     // `pin_reset` is the reset value of every pin word; `reset_words` overlays
-    // it (and sets the plain words). `irq` may be empty.
-    Gpio(std::string name, Line irq, uint32_t pin_reset, std::map<uint32_t, uint32_t> reset_words);
+    // it (and sets the plain words). `irq` and `site` may be empty.
+    Gpio(
+        std::string name, Line irq, uint32_t pin_reset, std::map<uint32_t, uint32_t> reset_words, SiteSource site = {});
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {
@@ -51,9 +54,11 @@ class Gpio : public Module {
     void        settle();
     uint64_t    pending() const;
     void        update_irq();
+    void        log_mode(unsigned pin, uint32_t cfg) const;
 
     std::string                                      name_;
     Line                                             irq_;
+    SiteSource                                       site_;
     uint32_t                                         pin_reset_;
     std::map<uint32_t, uint32_t>                     reset_words_, regs_;
     std::array<std::optional<bool>, kPins>           external_;

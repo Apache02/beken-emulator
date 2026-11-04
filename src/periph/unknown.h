@@ -22,8 +22,6 @@ namespace bk {
 // narrow loads and stores itself); a read past the end of the block returns 0.
 class Unknown : public Module {
   public:
-    using SiteSource = std::function<CodeSite()>;
-
     // `size` is in bytes (rounded up to whole words). `reset_words` maps a
     // word-aligned offset inside the block to its start value; throws
     // std::invalid_argument for any other offset. `site` may be empty.

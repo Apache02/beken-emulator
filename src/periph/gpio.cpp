@@ -3,15 +3,19 @@
 #include <stdexcept>
 #include <utility>
 
+#include "core/log.h"
+
 namespace bk {
 
 namespace {
 
 constexpr uint32_t kBank1Base = 0xC0;
 
-constexpr uint32_t kInput = 1u << 0, kOutput = 1u << 1, kOutputDisable = 1u << 3, kPullMode = 1u << 4,
-                   kPullEnable = 1u << 5, kFunctionEnable = 1u << 6;
+constexpr uint32_t kInput = 1u << 0, kOutput = 1u << 1, kInputEnable = 1u << 2, kOutputDisable = 1u << 3,
+                   kPullMode = 1u << 4, kPullEnable = 1u << 5, kFunctionEnable = 1u << 6;
 constexpr uint32_t kCfgWritable = 0x7E;
+// The config bits that make a pin's mode; the output level is not one of them.
+constexpr uint32_t kModeBits = kInputEnable | kOutputDisable | kPullMode | kPullEnable | kFunctionEnable;
 
 constexpr uint32_t kIntEnable = 0x84, kIntType0To15 = 0x88, kIntType16To31 = 0x8C, kIntStatus = 0x90,
                    kExtraIntCfg = 0x98, kDetect = 0x9C, kIntEnable32To39 = 0xE0, kIntType32To39 = 0xE4,
@@ -30,8 +34,9 @@ unsigned pin_at(uint32_t offset) {
 
 } // namespace
 
-Gpio::Gpio(std::string name, Line irq, uint32_t pin_reset, std::map<uint32_t, uint32_t> reset_words)
-    : name_(std::move(name)), irq_(std::move(irq)), pin_reset_(pin_reset), reset_words_(std::move(reset_words)) {
+Gpio::Gpio(std::string name, Line irq, uint32_t pin_reset, std::map<uint32_t, uint32_t> reset_words, SiteSource site)
+    : name_(std::move(name)), irq_(std::move(irq)), site_(std::move(site)), pin_reset_(pin_reset),
+      reset_words_(std::move(reset_words)) {
     reset();
 }
 
@@ -77,7 +82,9 @@ uint32_t Gpio::read(const std::string &, uint32_t offset, uint32_t) {
 void Gpio::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
     unsigned pin = pin_at(offset);
     if (pin < kPins) {
-        regs_[offset] = value & kCfgWritable;
+        const uint32_t old = word(offset);
+        regs_[offset]      = value & kCfgWritable;
+        if ((old ^ regs_[offset]) & kModeBits) log_mode(pin, regs_[offset]);
         refresh(pin);
     } else if (offset == kIntStatus) {
         latched_ &= ~static_cast<uint64_t>(value);
@@ -160,6 +167,23 @@ uint64_t Gpio::pending() const {
 
 void Gpio::update_irq() {
     if (irq_) irq_(pending() != 0);
+}
+
+void Gpio::log_mode(unsigned pin, uint32_t cfg) const {
+    std::string text = "pin " + std::to_string(pin) + ": ";
+    if (cfg & kFunctionEnable)
+        text += "peripheral function";
+    else if (!(cfg & kOutputDisable))
+        text += cfg & kOutput ? "output high" : "output low";
+    else if (cfg & kInputEnable)
+        text += "input";
+    else
+        text += "disabled";
+    // A pin that drives its pad has no use for a pull.
+    const bool drives = !(cfg & kFunctionEnable) && !(cfg & kOutputDisable);
+    if (!drives && (cfg & kPullEnable)) text += cfg & kPullMode ? ", pull-up" : ", pull-down";
+    if (site_) text += by_site(site_());
+    Logger::get("gpio").log(Level::Info, text);
 }
 
 } // namespace bk

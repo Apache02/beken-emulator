@@ -192,7 +192,8 @@ ModuleRegistry builtin_registry() {
         return std::make_unique<GdmaBk7252n>(ctx.name, ctx.clock, ctx.irq, *ctx.memory, bus_hz);
     };
     r["gpio"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
-        return std::make_unique<Gpio>(ctx.name, ctx.irq, u32_param(ctx, "pin_reset", 0), reset_words(ctx));
+        return std::make_unique<Gpio>(
+            ctx.name, ctx.irq, u32_param(ctx, "pin_reset", 0), reset_words(ctx), ctx.cpu_site);
     };
     r["i2c1"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         uint32_t ref_hz = u32_param(ctx, "ref_hz", 26000000);

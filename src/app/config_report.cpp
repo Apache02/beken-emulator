@@ -196,7 +196,8 @@ bool is_flash(const ModuleSpec &m) { return m.type == "flash"; }
 string logger_of(const string &type) {
     if (type == "flash") return "flash";
     if (type == "gdma") return "gdma";
-    if (type == "i2c1") return "i2c";
+    if (type == "gpio") return "gpio";
+    if (type == "i2c1") return "i2c1";
     if (type == "i2c2") return "i2c2";
     if (type == "jpeg") return "jpeg";
     if (type == "wdt") return "wdt";

@@ -40,6 +40,9 @@ struct CodeSite {
 // " by pc 0x..., lr 0x...": the ending of every log line about a CPU access.
 std::string by_site(const CodeSite &site);
 
+// Where the CPU makes the current access from, for modules that log it.
+using SiteSource = std::function<CodeSite()>;
+
 // Thrown by BusMemory when a bus master (a DMA engine) touches an address that
 // nothing readable or writable answers at.
 struct BusError : std::runtime_error {

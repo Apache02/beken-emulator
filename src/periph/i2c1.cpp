@@ -18,7 +18,7 @@ constexpr uint32_t kClkDivMask  = 0x3FF;
 constexpr uint32_t kIntFlag = 1u << 16, kRxAck = 1u << 17, kAckReq = 1u << 18, kBusy = 1u << 19;
 constexpr uint32_t kWritable = kEnable | kStart | kTxAck | kTxMode | (kClkDivMask << kClkDivShift) | kIntFlag;
 
-Logger &log() { return Logger::get("i2c"); }
+Logger &log() { return Logger::get("i2c1"); }
 
 std::string describe(uint32_t value) {
     std::string out;

@@ -19,10 +19,7 @@ struct Fixture {
     Unknown            block;
 
     explicit Fixture(uint32_t size = 0x100, std::map<uint32_t, uint32_t> words = {}, bool with_source = true)
-        : block("BLK",
-                size,
-                std::move(words),
-                with_source ? Unknown::SiteSource([this] { return site; }) : nullptr) {
+        : block("BLK", size, std::move(words), with_source ? SiteSource([this] { return site; }) : nullptr) {
         Logger::reset_for_tests();
         Logger::configure(out, false);
     }

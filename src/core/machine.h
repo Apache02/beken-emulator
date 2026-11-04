@@ -42,7 +42,7 @@ struct ModuleContext {
     // `dma` and `dma_request` become the request line of that DMA engine.
     std::shared_ptr<RequestLine> dma;
     // Where the CPU makes the current access from.
-    std::function<CodeSite()> cpu_site;
+    SiteSource cpu_site;
 
     // Integer parameter `key`, or `fallback` when absent. Throws
     // std::invalid_argument if present but not an integer.

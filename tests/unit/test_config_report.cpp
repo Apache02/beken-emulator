@@ -122,7 +122,7 @@ TEST_CASE("config report shows the mounted file, the RAM loads and what is attac
 TEST_CASE("config report takes the log levels from the loggers") {
     Levels levels;
     Logger::set_level("gdma", Level::Warning);
-    Logger::set_level("i2c", Level::None);
+    Logger::set_level("i2c1", Level::None);
     std::string text = report(options(), profile());
     CHECK(text.find("GDMA   gdma      0x00809000       0x200   warning  -\n") != std::string::npos);
     CHECK(text.find("I2C1   i2c1      0x00802300       0x8     none") != std::string::npos);

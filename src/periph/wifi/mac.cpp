@@ -50,13 +50,13 @@ uint64_t mac_address(std::span<const uint8_t> bytes) {
 
 } // namespace
 
-WifiMac::WifiMac(std::string                name,
-                 const Clock               &clock,
-                 Signal                     powered,
-                 Lines                      lines,
-                 Unknown::SiteSource        site,
-                 BusMemory                 &memory,
-                 Level                      bank_log_level)
+WifiMac::WifiMac(std::string  name,
+                 const Clock &clock,
+                 Signal       powered,
+                 Lines        lines,
+                 SiteSource   site,
+                 BusMemory   &memory,
+                 Level        bank_log_level)
     : name_(std::move(name)), clock_(clock), powered_(std::move(powered)), lines_(std::move(lines)),
       core_(name_ + "_CORE",
             kCoreSize,
@@ -65,8 +65,7 @@ WifiMac::WifiMac(std::string                name,
 },
             site,
             bank_log_level),
-      pl_(name_ + "_PL", kPlSize, {}, site, bank_log_level),
-      pta_(name_ + "_PTA", kPtaSize, {}, site, bank_log_level),
+      pl_(name_ + "_PL", kPlSize, {}, site, bank_log_level), pta_(name_ + "_PTA", kPtaSize, {}, site, bank_log_level),
       engine_(
           memory,
           [this](std::span<const uint8_t> frame) {

@@ -43,13 +43,13 @@ class WifiMac : public Module {
     // `powered` may be empty. `site` and `bank_log_level` (the level of
     // their access log lines) are passed to the stand-in banks. `memory` is the
     // bus master the frame engine reads descriptors through.
-    WifiMac(std::string                name,
-            const Clock               &clock,
-            Signal                     powered,
-            Lines                      lines,
-            Unknown::SiteSource        site,
-            BusMemory                 &memory,
-            Level                      bank_log_level = Level::Info);
+    WifiMac(std::string  name,
+            const Clock &clock,
+            Signal       powered,
+            Lines        lines,
+            SiteSource   site,
+            BusMemory   &memory,
+            Level        bank_log_level = Level::Info);
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {

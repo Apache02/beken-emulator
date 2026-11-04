@@ -1,10 +1,12 @@
 #include <doctest/doctest.h>
 
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include "core/log.h"
 #include "periph/gpio.h"
 
 using namespace bk;
@@ -292,6 +294,40 @@ TEST_CASE("gpio reset restores words, clears latches, keeps forced levels") {
     CHECK(f.r(pin_off(4)) == (0x28 | 1));
     // A reset reports no edge.
     CHECK(f.changes.size() == 1);
+}
+
+TEST_CASE("gpio logs a pin's mode at INFO when it changes") {
+    constexpr uint32_t kInputEn = 1u << 2;
+    std::ostringstream out;
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    Gpio g("gpio", {}, 0x28, {}, [] { return CodeSite{0x00001000, 0x00002001}; });
+    auto w = [&g](unsigned pin, uint32_t v) { g.write("regs", pin_off(pin), 4, v); };
+
+    w(12, kOutput);                                  // output, high
+    w(12, 0);                                        // only the level changes
+    w(5, kOutputOff | kInputEn | kPullEn | kPullUp); // input with a pull-up
+    w(5, kOutputOff | kInputEn | kPullEn | kPullUp); // the same mode again
+    w(33, kFunc | kOutputOff | kPullEn);             // peripheral function with a pull-down
+    w(7, kOutputOff);                                // neither input nor output, no pull
+    g.write("regs", kIntEnable, 4, 1);               // not a pin word
+
+    CHECK(out.str() == "[I] emulator.gpio: pin 12: output high by pc 0x00001000, lr 0x00002001\n"
+                       "[I] emulator.gpio: pin 5: input, pull-up by pc 0x00001000, lr 0x00002001\n"
+                       "[I] emulator.gpio: pin 33: peripheral function, pull-down by pc 0x00001000, lr 0x00002001\n"
+                       "[I] emulator.gpio: pin 7: disabled by pc 0x00001000, lr 0x00002001\n");
+    Logger::reset_for_tests();
+}
+
+TEST_CASE("gpio without a site source logs the mode alone and a reset logs nothing") {
+    std::ostringstream out;
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    Gpio g("gpio", {}, 0x28, {});
+    g.write("regs", pin_off(3), 4, kOutput);
+    g.reset();
+    CHECK(out.str() == "[I] emulator.gpio: pin 3: output high\n");
+    Logger::reset_for_tests();
 }
 
 TEST_CASE("gpio works without an interrupt line") {
