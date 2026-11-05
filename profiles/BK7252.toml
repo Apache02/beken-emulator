@@ -26,6 +26,20 @@ name = "SCTRL"
 chip_id = 0x0007221a
 device_id = 0x18221020
 
+# The BK7221U PWM (vendor SDK pwm.h: PWM_NEW_BASE + 0x80, after the timers).
+# The vendor bootloader times its UART download wait with PWM0, the vendor
+# SDK's RTOS tick is PWM0 too. The interrupt is ICU source 9. hz: the 26 MHz
+# clock the vendor SDK picks.
+[[module]]
+type = "pwm"
+name = "PWM"
+[module.bases]
+regs = 0x00802A80
+[module.params]
+intc = "ICU"
+irq = 9
+hz = 26000000
+
 [[module]]
 type = "unknown"
 name = "AUDIO"

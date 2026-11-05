@@ -152,6 +152,7 @@ const std::vector<std::pair<const char *, const char *>> kShippedModules = {
     {"TIMER1",   "timer"   },
     {"UART1",    "uart"    },
     {"UART2",    "uart"    },
+    {"PWM",      "pwm"     },
     {"AUDIO",    "unknown" },
     {"SDCARD",   "sdhost"  },
     {"LA",       "unknown" },
