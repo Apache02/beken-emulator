@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <exception>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -36,11 +37,37 @@ string mode_name(uint32_t cpsr) {
     }
 }
 
-// The source numbers of the set bits, for example "0,8,17", or "none".
-string sources(uint32_t bits) {
+// The modules wired to each source of the interrupt controller `intc`, from
+// the `intc` and `irq` parameters of the profile: the module name, or
+// `MODULE.LINE` for a line of an `irq` table.
+std::map<unsigned, string> source_names(const Profile &profile, const string &intc) {
+    std::map<unsigned, string> names;
+    auto                       add = [&names](int64_t bit, const string &name) {
+        if (bit < 0 || bit > 31) return;
+        string &s = names[static_cast<unsigned>(bit)];
+        s += (s.empty() ? "" : "/") + name;
+    };
+    for (const ModuleSpec &spec : profile.modules) {
+        const ParamValue *to  = spec.params.find("intc");
+        const ParamValue *irq = spec.params.find("irq");
+        if (!to || !irq || !to->string() || *to->string() != intc) continue;
+        if (const int64_t *bit = irq->integer()) add(*bit, spec.name);
+        if (const ParamTable *lines = irq->table())
+            for (const auto &[line, bit] : lines->entries)
+                if (const int64_t *b = bit.integer()) add(*b, spec.name + "." + line);
+    }
+    return names;
+}
+
+// The source numbers of the set bits with the modules wired to them, for
+// example "0 UART1, 8 TIMER0/TIMER1, 11", or "none".
+string sources(uint32_t bits, const std::map<unsigned, string> &names) {
     string out;
-    for (unsigned b = 0; b < 32; ++b)
-        if (bits >> b & 1) out += (out.empty() ? "" : ",") + std::to_string(b);
+    for (unsigned b = 0; b < 32; ++b) {
+        if (!(bits >> b & 1)) continue;
+        out += (out.empty() ? "" : ", ") + std::to_string(b);
+        if (auto it = names.find(b); it != names.end()) out += " " + it->second;
+    }
     return out.empty() ? "none" : out;
 }
 
@@ -104,9 +131,10 @@ std::string stop_report(const Profile &profile, Machine &machine) {
         out += "interrupt controller " + spec.name + "\n";
         out +=
             string("  global IRQ ") + ((global & 1) ? "on" : "off") + ", FIQ " + ((global & 2) ? "on" : "off") + "\n";
-        out += "  enabled " + sources(enable) + "\n";
-        out += "  raised  " + sources(raw) + "\n";
-        out += "  pending " + sources(raw & enable) + "\n";
+        const auto names = source_names(profile, spec.name);
+        out += "  enabled " + sources(enable, names) + "\n";
+        out += "  raised  " + sources(raw, names) + "\n";
+        out += "  pending " + sources(raw & enable, names) + "\n";
     }
     return out;
 }

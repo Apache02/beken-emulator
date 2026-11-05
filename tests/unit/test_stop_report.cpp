@@ -46,9 +46,34 @@ TEST_CASE("stop_report shows the cpu, the stack and the interrupt controllers") 
     CHECK(r.find("  r0   0x00000011") != std::string::npos);
     CHECK(r.find("  lr   0x0009C5F1") != std::string::npos);
     CHECK(r.find("stack at sp 0x00400100\n  0xDEADBEEF 0x00000000") != std::string::npos);
-    CHECK(r.find("interrupt controller ICU\n  global IRQ on, FIQ off\n  enabled 0,8\n  raised  none\n"
+    CHECK(r.find("interrupt controller ICU\n  global IRQ on, FIQ off\n  enabled 0, 8\n  raised  none\n"
                  "  pending none\n") != std::string::npos);
     CHECK(r.ends_with("\n"));
+}
+
+TEST_CASE("stop_report names the modules wired to the interrupt sources") {
+    Profile p = profile();
+    p.modules.push_back({
+        "timer", "TIMER0", {{"regs", 0x802A00}},
+          {{"intc", "ICU"}, {"irq", 8}}
+    });
+    p.modules.push_back({
+        "timer", "TIMER1", {{"regs", 0x802A40}},
+          {{"intc", "ICU"}, {"irq", 8}}
+    });
+    p.modules.push_back({
+        "unknown", "MAC", {{"regs", 0x803800}},
+          {{"intc", "ICU"}, {"irq", ParamTable{{"rx", 19}, {"tx", 20}}}}
+    });
+    Machine machine(p, builtin_registry());
+    machine.cpu().reset(0x400000);
+    Module *icu = machine.module("ICU");
+    icu->write("regs", 0x40, 4, 1u << 8 | 1u << 11 | 1u << 19 | 1u << 20);
+    icu->line(20)(true);
+
+    const std::string r = stop_report(p, machine);
+    CHECK(r.find("  enabled 8 TIMER0/TIMER1, 11, 19 MAC.rx, 20 MAC.tx\n  raised  20 MAC.tx\n  pending 20 MAC.tx\n") !=
+          std::string::npos);
 }
 
 TEST_CASE("stop_report says when the stack is not readable") {
