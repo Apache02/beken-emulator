@@ -49,9 +49,11 @@ over the network, on port 2323. Ctrl-C stops the emulator.
 executable (`<exe>/../profiles`) or in the directory named by
 `BKEMU_PROFILES`. `BK7252_4M` is the same chip with a 4 MiB flash; a profile
 takes another as its base with `extends = "BK7252"` and lists only what it
-changes (see `profiles/BK7252_4M.toml`). `BK7252N` is a different chip (the
-vendor SDK's SOC_BK7252N); its profile is a start, with stand-ins for the
-blocks whose registers differ from the BK7252 ones. `--load TARGET:FILE` places an image: `bootloader` (flash
+changes (see `profiles/BK7252_4M.toml`). `BK72XX` holds what the chips of the
+family share; it is not a chip of its own, and each chip profile extends it.
+`BK7252N` is a different chip (the vendor SDK's SOC_BK7252N); its profile is a
+start, with stand-ins for the blocks whose registers differ from the BK7252
+ones. `--load TARGET:FILE` places an image: `bootloader` (flash
 offset 0) and `app` (flash offset 0x11000) take CRC-protected `_crc.bin`
 images; `RAM`, `IRAM` and plain addresses are also accepted. On start the
 emulator prints where its UARTs are connected:

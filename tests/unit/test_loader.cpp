@@ -126,7 +126,8 @@ std::string error_of(Machine &m, const std::vector<LoadSpec> &loads) {
 
 namespace {
 
-// The modules of profiles/BK7252.toml in profile order: (name, type).
+// The modules of profiles/BK7252.toml in profile order: (name, type). Those of
+// BK72XX come first, then the ones BK7252 adds.
 const std::vector<std::pair<const char *, const char *>> kShippedModules = {
     {"FLASH",    "flash"   },
     {"SCTRL",    "sctrl"   },
@@ -136,17 +137,13 @@ const std::vector<std::pair<const char *, const char *>> kShippedModules = {
     {"MDM_CFG",  "unknown" },
     {"AGC",      "unknown" },
     {"MDM_3000", "unknown" },
-    {"AUDIO",    "unknown" },
-    {"SAR_ADC",  "saradc"  },
-    {"SDCARD",   "sdhost"  },
     {"AGC_RAM",  "unknown" },
     {"RC",       "unknown" },
     {"NX_INTC",  "unknown" },
     {"NX_DMA",   "unknown" },
-    {"LA",       "unknown" },
     {"MAC",      "wifi_mac"},
     {"GDMA",     "gdma"    },
-    {"JPEG",     "jpeg"    },
+    {"SAR_ADC",  "saradc"  },
     {"GPIO",     "gpio"    },
     {"I2C1",     "i2c1"    },
     {"I2C2",     "i2c2"    },
@@ -155,6 +152,10 @@ const std::vector<std::pair<const char *, const char *>> kShippedModules = {
     {"TIMER1",   "timer"   },
     {"UART1",    "uart"    },
     {"UART2",    "uart"    },
+    {"AUDIO",    "unknown" },
+    {"SDCARD",   "sdhost"  },
+    {"LA",       "unknown" },
+    {"JPEG",     "jpeg"    },
 };
 
 } // namespace
@@ -166,17 +167,18 @@ TEST_CASE("profile parses minimal bk7252") {
     CHECK(p.win_base == 0x00800000);
     CHECK(p.win_size == 0x00100000);
 
+    // RAM1 comes from BK72XX, so it is listed first.
     REQUIRE(p.memory.size() == 3);
-    CHECK(p.memory[0].name == "TCM");
-    CHECK(p.memory[0].base == 0x003F8000);
-    CHECK(p.memory[0].size == 0x8000);
+    CHECK(p.memory[0].name == "RAM1");
+    CHECK(p.memory[0].base == 0x00400000);
+    CHECK(p.memory[0].size == 0x40000);
     CHECK(p.memory[0].reset_fill == std::optional<uint8_t>(0xAA));
-    CHECK(p.memory[0].executable);
-    CHECK(p.memory[1].name == "RAM1");
-    CHECK(p.memory[1].base == 0x00400000);
-    CHECK(p.memory[1].size == 0x40000);
+    CHECK_FALSE(p.memory[0].executable);
+    CHECK(p.memory[1].name == "TCM");
+    CHECK(p.memory[1].base == 0x003F8000);
+    CHECK(p.memory[1].size == 0x8000);
     CHECK(p.memory[1].reset_fill == std::optional<uint8_t>(0xAA));
-    CHECK_FALSE(p.memory[1].executable);
+    CHECK(p.memory[1].executable);
     CHECK(p.memory[2].name == "RAM2");
     CHECK(p.memory[2].base == 0x00900000);
     CHECK(p.memory[2].executable);
@@ -244,15 +246,15 @@ TEST_CASE("shipped profile builds a machine") {
     for (const auto &[name, type] : kShippedModules) CHECK_MESSAGE(m.module(name) != nullptr, name);
     auto regions = m.bus().memory_regions();
     REQUIRE(regions.size() == 3);
-    CHECK(regions[0].name == "TCM");
-    CHECK(regions[0].base == 0x003F8000);
-    CHECK(regions[0].size == 0x8000);
-    CHECK(regions[0].executable);
-    CHECK(regions[1].name == "RAM1");
-    CHECK(regions[1].base == 0x00400000);
-    CHECK(regions[1].size == 0x40000);
-    CHECK(regions[1].span == 0x400000); // mirrors up to the peripheral window
-    CHECK_FALSE(regions[1].executable);
+    CHECK(regions[0].name == "RAM1");
+    CHECK(regions[0].base == 0x00400000);
+    CHECK(regions[0].size == 0x40000);
+    CHECK(regions[0].span == 0x400000); // mirrors up to the peripheral window
+    CHECK_FALSE(regions[0].executable);
+    CHECK(regions[1].name == "TCM");
+    CHECK(regions[1].base == 0x003F8000);
+    CHECK(regions[1].size == 0x8000);
+    CHECK(regions[1].executable);
     CHECK(regions[2].name == "RAM2");
     CHECK(regions[2].base == 0x00900000);
     CHECK(regions[2].size == 0x40000);
