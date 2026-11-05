@@ -132,6 +132,28 @@ TEST_CASE("clock_off pauses") {
     CHECK_FALSE(f.wdt.next_event_ns().has_value());
 }
 
+TEST_CASE("debug log shows the period, a kick while stopped, the start and the stop") {
+    Fixture f;
+    Logger::set_level("wdt", Level::Debug);
+    f.off = true;
+    f.w(0x5A0000 | 5000);
+    CHECK(f.out.str().find("period 5000 ms (was 16384 ms)") != std::string::npos);
+    f.w(0xA50000 | 5000);
+    CHECK(f.out.str().find("kick while the clock is off: not counting") != std::string::npos);
+    f.clock.now = 7 * kMs;
+    f.off       = false;
+    f.wdt.tick(7 * kMs);
+    CHECK(f.out.str().find("started: expires in 5000 ms unless kicked") != std::string::npos);
+    // Only the change is logged, not every tick.
+    const size_t logged = f.out.str().size();
+    f.wdt.tick(8 * kMs);
+    f.w(0x5A0000 | 5000);
+    CHECK(f.out.str().size() == logged);
+    f.off = true;
+    f.wdt.tick(1007 * kMs);
+    CHECK(f.out.str().find("clock off: stopped 4000 ms before expiry") != std::string::npos);
+}
+
 TEST_CASE("next_event_ns is deadline") {
     Fixture f;
     f.clock.now = 3 * kMs;

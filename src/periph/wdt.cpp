@@ -21,12 +21,17 @@ uint32_t Wdt::read(const std::string &, uint32_t offset, uint32_t) { return offs
 
 void Wdt::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
     if (offset != 0) return;
-    reg_          = value & kMask;
+    const uint32_t was = reg_ & 0xFFFF;
+    reg_               = value & kMask;
+    if ((reg_ & 0xFFFF) != was)
+        Logger::get("wdt").log(Level::Debug,
+                               "period " + std::to_string(reg_ & 0xFFFF) + " ms (was " + std::to_string(was) + " ms)");
     uint32_t key  = (value >> 16) & 0xFF;
     bool     kick = key == kKey2 && key1_seen_;
     key1_seen_    = key == kKey1;
     if (!kick) return;
     if (!running()) {
+        Logger::get("wdt").log(Level::Debug, "kick while the clock is off: not counting");
         start_.reset();
         return;
     }
@@ -41,10 +46,19 @@ void Wdt::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) 
 
 void Wdt::tick(uint64_t now_ns) {
     if (!running()) {
+        if (start_ && now_ns < *start_ + period_ns())
+            Logger::get("wdt").log(Level::Debug,
+                                   "clock off: stopped " +
+                                       std::to_string((*start_ + period_ns() - now_ns) / 1'000'000) +
+                                       " ms before expiry");
         start_.reset();
         return;
     }
-    if (!start_) start_ = now_ns;
+    if (!start_) {
+        start_ = now_ns;
+        Logger::get("wdt").log(Level::Debug,
+                               "started: expires in " + std::to_string(period_ns() / 1'000'000) + " ms unless kicked");
+    }
     if (now_ns >= *start_ + period_ns()) {
         Logger::get("wdt").log(Level::Error,
                                "watchdog expired after " + std::to_string(period_ns() / 1'000'000) + " ms" +
