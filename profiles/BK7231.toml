@@ -1,0 +1,22 @@
+extends = "BK7252"
+name = "BK7231"
+
+[[memory]]
+name = "TCM"
+base = 0x003F0000
+size = 0x10000
+reset_fill = 0xAA
+
+# The BK7231U PWM (vendor SDK pwm.h: PWM_NEW_BASE + 0x80, after the timers).
+# The vendor bootloader times its UART download wait with PWM0, the vendor
+# SDK's RTOS tick is PWM0 too. The interrupt is ICU source 9. hz: the 26 MHz
+# clock the vendor SDK picks.
+[[module]]
+type = "pwm"
+name = "PWM"
+[module.bases]
+regs = 0x00802A80
+[module.params]
+intc = "ICU"
+irq = 9
+hz = 26000000
