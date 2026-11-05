@@ -116,6 +116,14 @@ the physical image with the CRC bytes, like the `_crc.bin` files, and is locked
 while an emulator uses it. `--flash-mount NAME=FILE` picks the flash module
 `NAME` when a profile has more than one.
 
+The block protection bits of the flash status register are kept and read
+back, but by default they protect nothing: every flash chip maps them to
+address ranges in its own way, and firmware that protects the code and then
+writes its data at the end of the flash would see the write refused. A change
+of the status registers is a warning in the log. `emulate_protection = true` in
+the parameters of a profile's flash module makes set BP bits refuse page
+programs and erases over the whole flash.
+
 ### Encrypted images and the eFuse
 
 The flash controller decrypts what the CPU reads through the XIP window with a

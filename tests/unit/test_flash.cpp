@@ -79,7 +79,8 @@ struct Fixture {
     std::vector<Call>  inv;
     Flash              flash;
 
-    explicit Fixture(uint32_t size = 0x200000, uint32_t jedec = 0x1C7015) : flash("flash", size, jedec) {
+    explicit Fixture(uint32_t size = 0x200000, uint32_t jedec = 0x1C7015, Flash::Options options = {})
+        : flash("flash", size, jedec, std::move(options)) {
         Logger::reset_for_tests();
         Logger::configure(out, false);
         flash.xip_invalidate = [this](uint32_t o, uint32_t s) { inv.emplace_back("xip", o, s); };
@@ -545,13 +546,45 @@ TEST_CASE("erase sector 4 KiB, block 32/64 KiB, chip") {
     CHECK(g.flash.raw() == raw);
 }
 
-TEST_CASE("bp bits suppress pp and ignore erase, wrsr allowed") {
+TEST_CASE("bp bits are kept but not enforced by default, a status change is a warning") {
     Fixture f;
+    CHECK_FALSE(f.flash.emulate_protection());
+    f.flash.load(0, std::vector<uint8_t>(0x2000, 0));
+    f.wrsr(WRSR, 0x1C);
+    CHECK(f.rdsr() == 0x1C);
+    CHECK(f.out.str().find("[W]") != std::string::npos);
+    CHECK(f.out.str().find("status 0x00 -> 0x1C") != std::string::npos);
+    CHECK(f.out.str().find("not enforced") != std::string::npos);
+    // Writing the same value again is not a change.
+    const size_t logged = f.out.str().size();
+    f.wrsr(WRSR, 0x1C);
+    CHECK(f.out.str().size() == logged);
+    f.w(kWriteData, 0x12345678);
+    f.cmd(PP, 0x2040);
+    f.cmd(SE, 0x1000);
+    std::vector<uint8_t> raw = f.flash.raw();
+    CHECK(raw[0x2040] == 0x78);
+    CHECK(raw[0x2043] == 0x12);
+    CHECK(raw[0xFFF] == 0);
+    CHECK(raw[0x1000] == 0xFF);
+    CHECK(raw[0x1FFF] == 0xFF);
+    CHECK(f.rdsr() == 0x1C);
+    // The second status register is logged as well.
+    f.wrsr(WRSR2, 0x401C);
+    CHECK(f.out.str().find("status2 0x00 -> 0x40") != std::string::npos);
+}
+
+TEST_CASE("bp bits suppress pp and ignore erase when enforced, wrsr allowed") {
+    Flash::Options options;
+    options.emulate_protection = true;
+    Fixture f(0x200000, 0x1C7015, options);
+    CHECK(f.flash.emulate_protection());
     f.flash.load(0, std::vector<uint8_t>(0x2000, 0));
     std::vector<uint8_t> before = f.flash.raw();
     f.inv.clear();
     f.wrsr(WRSR, 0x1C);
     CHECK(f.rdsr() == 0x1C);
+    CHECK(f.out.str().find("status 0x00 -> 0x1C, block protection enforced") != std::string::npos);
     f.cmd(WREN);
     f.w(kWriteData, 0x12345678);
     f.cmd(PP, 0x2040);

@@ -49,6 +49,12 @@ class Flash : public Module, public XipMemory {
         // through XIP beyond the first 2 MiB. By default the window covers the
         // data of every block, up to 2 MiB.
         std::optional<uint32_t> xip_size;
+        // Whether the block protection bits of the status register (BP, 0x1C)
+        // refuse page programs and erases, over the whole flash. Off by
+        // default: flash chips map the protection bits to address ranges each
+        // in their own way, so the bits are kept and read back but every write
+        // goes through.
+        bool emulate_protection = false;
     };
 
     static constexpr uint32_t kMaxXipSize = 0x200000;
@@ -94,6 +100,8 @@ class Flash : public Module, public XipMemory {
     const MappedFile *mounted() const { return file_.get(); }
     // The size of the flash in bytes.
     uint32_t size() const { return size_; }
+    // Whether the block protection bits are enforced (`Options::emulate_protection`).
+    bool emulate_protection() const { return options_.emulate_protection; }
 
     // Where the key of the XIP cipher comes from: asked now and at every
     // reset, as the chip takes it from the eFuse when it starts. Without a

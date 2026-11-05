@@ -10,7 +10,9 @@ namespace bk {
 // Parameters each type reads (anything else is ignored):
 //   flash: size (default 0x200000), jedec_id (default 0x1C7015), xip_size (the
 //          XIP window, a multiple of 4096 up to 0x200000; by default the data of
-//          every block up to 0x200000; its address is the base "xip"), reset_words
+//          every block up to 0x200000; its address is the base "xip"),
+//          emulate_protection (true makes the BP bits of the status register refuse
+//          programs and erases over the whole flash; default false), reset_words
 //          (as for intc; the plain words of the regs range, 0x1C for config,
 //          crc_en only by default, and 0x14 for the m_value field [29:22] and
 //          the read FIFO pointer [18:16] of status, 0 by default)

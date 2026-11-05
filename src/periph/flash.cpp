@@ -226,7 +226,7 @@ void Flash::write_command(uint32_t opcode, uint32_t addr, bool wp) {
                   format("flash %s at 0x%06X ignored: WP# not released (operate_sw.wp = 0)", name, addr));
         return;
     }
-    bool protect = (sr_ & kBlockProtect) != 0;
+    bool protect = options_.emulate_protection && (sr_ & kBlockProtect) != 0;
     if (opcode == kPp && protect) {
         log().log(Level::Warning,
                   format("flash PP at 0x%06X suppressed: block protection is set in the status "
@@ -239,9 +239,28 @@ void Flash::write_command(uint32_t opcode, uint32_t addr, bool wp) {
     wel_ = false;
     if (opcode == kWrsr || opcode == kWrsr2) {
         uint32_t data = (config_ >> 10) & 0xFFFF;
-        sr_           = data & 0xFC;
+        uint32_t sr = sr_, sr2 = sr2_;
+        sr_ = data & 0xFC;
         if (opcode == kWrsr2) sr2_ = data >> 8;
-        log().log(Level::Debug, format("%s: status 0x%02X, status2 0x%02X", name, sr_, sr2_));
+        if (sr_ == sr && sr2_ == sr2) {
+            log().log(Level::Debug, format("%s: status 0x%02X, status2 0x%02X unchanged", name, sr_, sr2_));
+            return;
+        }
+        // The status registers hold the block protection bits, so a change is
+        // worth seeing whether or not the model enforces them.
+        const char *enforced = options_.emulate_protection ? "enforced" : "not enforced";
+        if (opcode == kWrsr2)
+            log().log(Level::Warning,
+                      format("%s: status 0x%02X -> 0x%02X, status2 0x%02X -> 0x%02X, block protection %s",
+                             name,
+                             sr,
+                             sr_,
+                             sr2,
+                             sr2_,
+                             enforced));
+        else
+            log().log(Level::Warning,
+                      format("%s: status 0x%02X -> 0x%02X, block protection %s", name, sr, sr_, enforced));
         return;
     }
     if (opcode == kPp) {

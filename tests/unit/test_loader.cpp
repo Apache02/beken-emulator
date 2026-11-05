@@ -471,6 +471,17 @@ TEST_CASE("BK7252_4M is BK7252 with a 4 MiB flash") {
     CHECK(dynamic_cast<Flash *>(small.module("FLASH"))->size() == 0x200000);
 }
 
+TEST_CASE("emulate_protection turns the flash block protection on") {
+    TempDir dir;
+    dir.write("SMALL.toml", kSmallProfile);
+    dir.write("LOCKED.toml",
+              "extends = \"SMALL\"\n[[module]]\nname = \"FLASH\"\n[module.params]\nemulate_protection = true\n");
+    Machine off(load_profile("SMALL", dir.path), builtin_registry());
+    CHECK_FALSE(dynamic_cast<Flash *>(off.module("FLASH"))->emulate_protection());
+    Machine on(load_profile("LOCKED", dir.path), builtin_registry());
+    CHECK(dynamic_cast<Flash *>(on.module("FLASH"))->emulate_protection());
+}
+
 TEST_CASE("BK7231_4M is BK7231 with a 4 MiB flash") {
     Profile base = load_profile("BK7231", BK_PROFILES_DIR);
     Profile big  = load_profile("BK7231_4M", BK_PROFILES_DIR);

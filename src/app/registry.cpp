@@ -177,6 +177,7 @@ ModuleRegistry builtin_registry() {
         Flash::Options options;
         options.words = reset_words(ctx);
         if (ctx.params.find("xip_size")) options.xip_size = u32_param(ctx, "xip_size", 0);
+        options.emulate_protection = ctx.integer("emulate_protection", 0) != 0;
         return std::make_unique<Flash>(
             ctx.name, u32_param(ctx, "size", 0x200000), u32_param(ctx, "jedec_id", 0x1C7015), std::move(options));
     };
