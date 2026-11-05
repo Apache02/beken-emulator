@@ -4,10 +4,12 @@
 
 namespace bk {
 
-// Factories for every built-in module type: flash, gdma, gpio, i2c1, i2c2, intc,
-// jpeg, saradc, sctrl, timer, trng, uart, unknown, wdt, wifi_mac.
+// Factories for every built-in module type: ble_core, flash, gdma, gpio, i2c1,
+// i2c2, intc, jpeg, saradc, sctrl, timer, trng, uart, unknown, wdt, wifi_mac.
 //
 // Parameters each type reads (anything else is ignored):
+//   ble_core: em_size (bytes of the exchange memory, base "em", a multiple of
+//          4, default 0x2000); registers at base "regs", see BleCore
 //   flash: size (default 0x200000), jedec_id (default 0x1C7015), xip_size (the
 //          XIP window, a multiple of 4096 up to 0x200000; by default the data of
 //          every block up to 0x200000; its address is the base "xip"),

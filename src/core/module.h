@@ -109,6 +109,13 @@ class Module {
 
     virtual uint32_t read(const std::string &range, uint32_t offset, uint32_t size)                  = 0;
     virtual void     write(const std::string &range, uint32_t offset, uint32_t size, uint32_t value) = 0;
+    // Whether `range` is memory with byte enables: the bus then passes a byte
+    // or halfword store at its own offset and size. Otherwise (registers) it
+    // writes the whole word with the narrow value repeated on every lane.
+    virtual bool byte_lanes(const std::string &range) const {
+        (void)range;
+        return false;
+    }
 
     virtual void tick(uint64_t now_ns) { (void)now_ns; }
     // Time of the next scheduled event, if any.

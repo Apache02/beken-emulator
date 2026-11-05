@@ -328,6 +328,18 @@ void Bus::write(uint32_t addr, unsigned size, uint32_t value) {
             log_.log(Level::Warning, format("unclaimed peripheral write at 0x%08X", addr) + by_site(cpu_.site()));
         return;
     }
+    // Memory behind a module, such as the BLE exchange memory, has byte enables.
+    if (s->module->byte_lanes(*s->range)) {
+        try {
+            s->module->write(*s->range, addr - s->base, size, value);
+        } catch (const Fault &f) {
+            cpu_.post_fault(f.kind);
+        } catch (const std::exception &e) {
+            log_.log(Level::Error, *s->range + " write failed: " + e.what());
+            cpu_.stop();
+        }
+        return;
+    }
     // A register is written as a whole word with no byte enables: the core repeats a byte or
     // halfword on every byte lane, and the address only picks the lane inside the core (measured on
     // the board: a store at +1, +2 or +3 reaches the same register).

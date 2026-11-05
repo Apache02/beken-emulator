@@ -243,6 +243,14 @@ build/bkemu BK7252 --load ... --wifi-ap TESTNET --pcap /tmp/bk.cap
 Opening a pipe waits for its reader, and the emulator says so. If the reader
 goes away, the capture stops with one warning and the emulator carries on.
 
+### BLE
+
+The BLE 4.2 core of the BK7252 and BK7231 profiles (module `BLE`) has no
+radio: a BLE stack starts, advertises into nothing and never sees a peer. Its
+registers read back what was written, its timer counts with the device time and
+its exchange memory is RAM, so firmware that waits for the BLE timer or keeps
+its BLE state there gets past it.
+
 ### Deep sleep
 
 When the firmware puts the chip into deep sleep, the chip powers down until a

@@ -20,6 +20,15 @@ reset_fill = 0xAA
 [alias]
 IRAM = 0x00900000
 
+# The BLE 4.2 core: registers and the exchange memory (vendor SDK
+# driver/ble/ble_4_2). No radio: the BLE stack starts and its timer runs.
+[[module]]
+type = "ble_core"
+name = "BLE"
+[module.bases]
+regs = 0x00810000
+em = 0x00814000
+
 [[module]]
 name = "SCTRL"
 [module.params]

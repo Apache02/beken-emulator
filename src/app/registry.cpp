@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "periph/ble_core.h"
 #include "periph/flash.h"
 #include "periph/gdma.h"
 #include "periph/gdma_bk7252n.h"
@@ -173,6 +174,11 @@ std::vector<uint8_t> picture_param(const ModuleContext &ctx) {
 
 ModuleRegistry builtin_registry() {
     ModuleRegistry r;
+    r["ble_core"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        uint32_t em_size = u32_param(ctx, "em_size", 0x2000);
+        if (em_size == 0 || em_size % 4 != 0) bad(ctx, "em_size must be a non-zero multiple of 4");
+        return std::make_unique<BleCore>(ctx.name, ctx.clock, em_size);
+    };
     r["flash"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         Flash::Options options;
         options.words = reset_words(ctx);

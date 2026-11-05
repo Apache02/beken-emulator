@@ -37,6 +37,7 @@ add_library(bk_core STATIC
         src/app/config_report.cpp
         src/app/stop_report.cpp
         src/app/endpoints.cpp
+        src/periph/ble_core.cpp
         src/periph/flash.cpp
         src/periph/flash_cipher.cpp
         src/i2c/catalog.cpp
@@ -117,6 +118,7 @@ add_executable(unit_tests
         tests/unit/test_i2c2.cpp
         tests/unit/test_i2c_devices.cpp
         tests/unit/test_trng.cpp
+        tests/unit/test_ble_core.cpp
         tests/unit/test_saradc.cpp
         tests/unit/test_saradc_bk7238.cpp
         tests/unit/test_sdhost.cpp

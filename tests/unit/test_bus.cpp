@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -48,6 +49,7 @@ struct FakeDev : Module {
     std::string                     id;
     std::vector<Call>               calls;
     std::map<std::string, uint32_t> value; // read result per range
+    std::set<std::string>           lanes; // ranges written with byte lanes
     bool                            fault = false;
 
     explicit FakeDev(std::string n = "dev") : id(std::move(n)) {}
@@ -67,6 +69,7 @@ struct FakeDev : Module {
     void write(const std::string &r, uint32_t off, uint32_t size, uint32_t v) override {
         calls.emplace_back("write", r, off, size, v);
     }
+    bool byte_lanes(const std::string &r) const override { return lanes.count(r) != 0; }
 };
 
 // A module with an XIP window and no registers: 8 KiB of bytes plus bad spans per page.
@@ -278,6 +281,30 @@ TEST_CASE("mmio narrow stores at any lane write the word at its address") {
     CHECK(f.dev.calls == std::vector<Call>{
                              {"write", "regs", 8, 4, expect}
     });
+}
+
+TEST_CASE("a range with byte lanes gets narrow stores at their own address and size") {
+    Fixture f;
+    f.dev.lanes = {"regs"};
+    Call expect;
+    SUBCASE("byte at +1") {
+        f.program({kStrbR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + 9);
+        expect = {"write", "regs", 9, 1, 0xBE};
+    }
+    SUBCASE("halfword at +2") {
+        f.program({kStrhR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + 10);
+        expect = {"write", "regs", 10, 2, 0xBABE};
+    }
+    SUBCASE("word") {
+        f.program({kStrR1R2});
+        f.cpu.set_reg(Reg::R2, kRegs + 8);
+        expect = {"write", "regs", 8, 4, 0xCAFEBABE};
+    }
+    f.cpu.set_reg(Reg::R1, 0xCAFEBABE);
+    CHECK(f.run() == kOk);
+    CHECK(f.dev.calls == std::vector<Call>{expect});
 }
 
 TEST_CASE("unclaimed address reads 0 and ignores writes") {

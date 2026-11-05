@@ -390,7 +390,7 @@ TEST_CASE("unknown module type error text") {
     };
     // The known types are listed in registry order, so the full text changes with every new module type.
     CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()),
-                         doctest::Contains("unknown module type 'bogus' (known: flash, "),
+                         doctest::Contains("unknown module type 'bogus' (known: ble_core, flash, "),
                          std::invalid_argument);
 }
 
