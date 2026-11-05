@@ -58,6 +58,14 @@ std::string usage() {
            "                       once. The image has the CRC bytes, as the _crc.bin\n"
            "                       files. NAME picks a flash module when the profile\n"
            "                       has several; repeatable for different modules\n"
+           "  --efuse FILE|HEX|key:W0,W1,W2,W3\n"
+           "                       What the eFuse holds at start: the bytes of an eFuse\n"
+           "                       dump FILE, bytes in hex from byte 0 (up to 64 digits;\n"
+           "                       a value of hex digits only is never a file name), or\n"
+           "                       just the key of the flash cipher as its four words\n"
+           "                       (key:510fb093,a3cbeadc,5993a17e,c7adeb03). Without it\n"
+           "                       an image encrypted with a known key is detected and\n"
+           "                       the key put into the eFuse\n"
            "  -p, --publish SPEC   Forward a host port to a port of the firmware on its WiFi\n"
            "                       network: [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]\n"
            "                       (host address 127.0.0.1 and tcp by default; ports\n"
@@ -184,6 +192,13 @@ CliOptions parse_cli(int argc, char **argv) {
             std::string file = name.empty() ? v : v.substr(name.size() + 1);
             if (file.empty()) throw CliError("--flash-mount needs [NAME=]FILE");
             o.flash_mounts.emplace_back(std::move(name), std::move(file));
+        } else if (opt == "--efuse") {
+            if (o.efuse) throw CliError("--efuse given twice");
+            try {
+                o.efuse = parse_efuse(value());
+            } catch (const std::invalid_argument &e) {
+                throw CliError(e.what());
+            }
         } else if (opt == "--i2c1" || opt == "--i2c2") {
             o.i2c.emplace_back("I2C" + opt.substr(5), value());
         } else if (opt == "--uart1" || opt == "--uart2") {

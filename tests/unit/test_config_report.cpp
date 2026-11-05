@@ -97,6 +97,28 @@ TEST_CASE("config report of a bare command line") {
                                   "└─ wifi  off\n");
 }
 
+TEST_CASE("config report says where the eFuse contents come from, with an SCTRL only") {
+    Levels  levels;
+    Profile p = profile();
+    p.modules.push_back({"sctrl", "SCTRL", {{"regs", 0x800000}}, {}});
+    CliOptions o = options();
+    o.loads.push_back({"app", "/nonexistent/app.bin"});
+    CHECK(report(o, p).find("cpu       100 insns/us\nefuse     key detected from the image\n\nflash\n") !=
+          std::string::npos);
+    o.efuse = parse_efuse("key:510fb093,a3cbeadc,5993a17e,c7adeb03");
+    CHECK(report(o, p).find("\nefuse     key 510fb093 a3cbeadc 5993a17e c7adeb03\n") != std::string::npos);
+    o.efuse.reset();
+    CHECK(report(o, profile()).find("efuse") == std::string::npos);
+}
+
+TEST_CASE("config report refuses --efuse without an SCTRL") {
+    Levels     levels;
+    CliOptions o = options();
+    o.loads.push_back({"app", "/nonexistent/app.bin"});
+    o.efuse = parse_efuse("key:1,2,3,4");
+    CHECK(error_of(o, profile()) == "--efuse needs a profile with an SCTRL module");
+}
+
 TEST_CASE("config report shows the mounted file, the RAM loads and what is attached") {
     Levels     levels;
     CliOptions o = options();

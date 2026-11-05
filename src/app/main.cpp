@@ -205,6 +205,9 @@ int run(int argc, char **argv) {
         endpoints[name] = std::move(endpoint);
     }
 
+    // The images are in place and the options checked: the eFuse key may come
+    // from the images.
+    bk::setup_efuse(machine, profile, options.efuse);
     machine.cpu().reset(0);
     // The chip powers down in deep sleep and only a wake-up brings it back,
     // which is not emulated: the run ends there.

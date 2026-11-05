@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -13,6 +14,7 @@
 #include "core/mapped_file.h"
 #include "core/module.h"
 #include "core/xip.h"
+#include "periph/flash_cipher.h"
 
 namespace bk {
 
@@ -21,9 +23,11 @@ namespace bk {
 // The physical store is a sequence of 34-byte blocks: 32 data bytes followed by
 // a big-endian CRC-16 of them. The `xip` range is a decoded view that shows only
 // the data bytes (32 per block); while CRC checking is enabled, blocks whose CRC
-// does not match cannot be read through it. The `regs` range is the command
-// interface: status registers, a read FIFO, a write FIFO, page program and
-// erases. Every command completes instantly.
+// does not match cannot be read through it. Data read through the window is
+// decrypted with the flash cipher, whose key comes from the eFuse; the CRC is
+// of the encrypted bytes. The `regs` range is the command interface: status
+// registers, a read FIFO, a write FIFO, page program and erases, all on the
+// physical bytes without the cipher. Every command completes instantly.
 class Flash : public Module, public XipMemory {
   public:
     static constexpr uint32_t kCrcEn = 1u << 26;
@@ -91,6 +95,12 @@ class Flash : public Module, public XipMemory {
     // The size of the flash in bytes.
     uint32_t size() const { return size_; }
 
+    // Where the key of the XIP cipher comes from: asked now and at every
+    // reset, as the chip takes it from the eFuse when it starts. Without a
+    // source the key is blank and the cipher off.
+    void               set_key_source(std::function<FlashKey()> source);
+    const FlashCipher &cipher() const { return cipher_; }
+
   private:
     bool crc_en() const { return (config_ & kCrcEn) != 0; }
     // Whether XIP block `n` can be read (past the end never; CRC checked if enabled).
@@ -101,6 +111,8 @@ class Flash : public Module, public XipMemory {
     // The start values of `config` and of the fields of `status`, from the options.
     uint32_t config_reset() const;
     void     reset_status();
+    // Takes the key from the source; invalidates the window when it changed.
+    void latch_key();
 
     void run(uint32_t opcode, uint32_t addr, bool wp);
     void write_command(uint32_t opcode, uint32_t addr, bool wp);
@@ -118,6 +130,8 @@ class Flash : public Module, public XipMemory {
     // Cached CRC verdict per block: unknown until first checked.
     std::vector<std::optional<bool>> verdicts_;
     std::optional<uint32_t>          last_alert_block_;
+    std::function<FlashKey()>        key_source_;
+    FlashCipher                      cipher_;
 
     Options                      options_;
     std::map<uint32_t, uint32_t> words_; // the plain controller words

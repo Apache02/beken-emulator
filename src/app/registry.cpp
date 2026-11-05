@@ -246,7 +246,8 @@ ModuleRegistry builtin_registry() {
                                        reset_words(ctx),
                                        reset_words(ctx, "warm_reset_words"),
                                        signal_specs(ctx),
-                                       read_adjust(ctx));
+                                       read_adjust(ctx),
+                                       ctx.cpu_site);
     };
     r["timer"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Timer>(ctx.name, ctx.clock, ctx.irq, u32_param(ctx, "hz", 26000000));

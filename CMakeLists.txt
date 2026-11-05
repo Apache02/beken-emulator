@@ -33,10 +33,12 @@ add_library(bk_core STATIC
         src/core/mapped_file.cpp
         src/app/registry.cpp
         src/app/cli.cpp
+        src/app/efuse_option.cpp
         src/app/config_report.cpp
         src/app/stop_report.cpp
         src/app/endpoints.cpp
         src/periph/flash.cpp
+        src/periph/flash_cipher.cpp
         src/i2c/catalog.cpp
         src/i2c/register_device.cpp
         src/periph/gdma.cpp
@@ -122,11 +124,13 @@ add_executable(unit_tests
         tests/unit/test_uart.cpp
         tests/unit/test_wdt.cpp
         tests/unit/test_flash.cpp
+        tests/unit/test_flash_cipher.cpp
         tests/unit/test_cpu.cpp
         tests/unit/test_bus.cpp
         tests/unit/test_machine.cpp
         tests/unit/test_loader.cpp
         tests/unit/test_cli.cpp
+        tests/unit/test_efuse_option.cpp
         tests/unit/test_config_report.cpp
         tests/unit/test_stop_report.cpp
         tests/unit/test_endpoints.cpp

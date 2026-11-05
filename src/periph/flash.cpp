@@ -141,7 +141,9 @@ uint32_t Flash::xip_read(uint32_t offset, uint32_t size) {
             }
             throw Fault{Fault::Kind::Dabt, l};
         }
-        value |= static_cast<uint32_t>(raw_[static_cast<size_t>(n) * kBlockRaw + l % kBlockData]) << (8 * i);
+        uint8_t byte = raw_[static_cast<size_t>(n) * kBlockRaw + l % kBlockData];
+        byte ^= static_cast<uint8_t>(cipher_.mask(l & ~3u) >> (8 * (l % 4)));
+        value |= static_cast<uint32_t>(byte) << (8 * i);
     }
     return value;
 }
@@ -300,6 +302,11 @@ Page Flash::xip_page(uint32_t page_offset) {
         uint32_t n = (page_offset + pos) / kBlockData;
         if (readable(n)) {
             std::copy_n(raw_.begin() + static_cast<std::ptrdiff_t>(n) * kBlockRaw, kBlockData, p.data.begin() + pos);
+            if (cipher_.bypass()) continue;
+            for (uint32_t w = 0; w < kBlockData; w += 4) {
+                const uint32_t mask = cipher_.mask(page_offset + pos + w);
+                for (uint32_t b = 0; b < 4; ++b) p.data[pos + w + b] ^= static_cast<uint8_t>(mask >> (8 * b));
+            }
         } else {
             p.bad.push_back({pos, pos + kBlockData});
         }
@@ -316,6 +323,21 @@ void Flash::reset() {
     reset_status();
     write_fifo_.clear();
     set_config(config_reset());
+    latch_key();
+}
+
+void Flash::set_key_source(std::function<FlashKey()> source) {
+    key_source_ = std::move(source);
+    latch_key();
+}
+
+void Flash::latch_key() {
+    const FlashKey key = key_source_ ? key_source_() : FlashKey{};
+    if (key == cipher_.key()) return;
+    cipher_ = FlashCipher(key);
+    log().log(Level::Info,
+              cipher_.bypass() ? "XIP cipher off, key " + key_text(key) : "XIP cipher on, key " + key_text(key));
+    invalidate_window();
 }
 
 void Flash::check_load(uint32_t offset, uint32_t size) const {

@@ -31,7 +31,8 @@ class Sctrl : public Module {
           std::map<uint32_t, uint32_t>      reset_words,
           std::map<uint32_t, uint32_t>      warm_reset_words,
           std::map<std::string, SignalSpec> signals,
-          std::vector<ReadAdjust>           read_adjust);
+          std::vector<ReadAdjust>           read_adjust,
+          SiteSource                        cpu_site = {});
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {
@@ -48,6 +49,9 @@ class Sctrl : public Module {
 
     // The firmware wrote the deep sleep word since the last reset.
     bool deep_sleep() const { return deep_sleep_; }
+
+    Efuse       &efuse() { return efuse_; }
+    const Efuse &efuse() const { return efuse_; }
 
   private:
     uint32_t stored(uint32_t offset) const;

@@ -180,6 +180,38 @@ TEST_CASE("xip decodes data bytes") {
     CHECK(p.bad.back().end == 4096);
 }
 
+TEST_CASE("xip decrypts with the key from its source; the registers read the physical bytes") {
+    const FlashKey tuya{0x510FB093, 0xA3CBEADC, 0x5993A17E, 0xC7ADEB03};
+    Fixture        f;
+    f.flash.load(0, cat(block(0x00), block(0x40)));
+    FlashKey key = tuya;
+    f.inv.clear();
+    f.flash.set_key_source([&key] { return key; });
+    CHECK_FALSE(f.inv.empty());
+    CHECK_FALSE(f.flash.cipher().bypass());
+
+    const FlashCipher cipher(tuya);
+    CHECK(f.flash.xip_read(0, 4) == (0x03020100 ^ 0x7CB50721));
+    CHECK(f.flash.xip_read(32, 4) == (0x43424140 ^ cipher.mask(32)));
+    CHECK(f.flash.xip_read(34, 2) == ((0x43424140 ^ cipher.mask(32)) >> 16));
+    Page p = f.flash.xip_page(0);
+    CHECK(p.data[0] == (0x00 ^ 0x21));
+    CHECK(p.data[3] == (0x03 ^ 0x7C));
+    CHECK(p.data[63] == static_cast<uint8_t>(0x5F ^ cipher.mask(60) >> 24));
+
+    f.cmd(READ, 0);
+    CHECK(f.r(kReadData) == 0x03020100);
+
+    // The key is taken again at reset only.
+    key = FlashKey{};
+    CHECK(f.flash.xip_read(0, 4) == (0x03020100 ^ 0x7CB50721));
+    f.inv.clear();
+    f.flash.reset();
+    CHECK(f.flash.cipher().bypass());
+    CHECK_FALSE(f.inv.empty());
+    CHECK(f.flash.xip_read(0, 4) == 0x03020100);
+}
+
 TEST_CASE("bad crc block is bad span and read faults") {
     Fixture f;
     f.flash.load(0, cat(cat(block(0x00), block(0x40, false)), block(0x80)));

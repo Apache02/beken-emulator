@@ -62,6 +62,7 @@ TEST_CASE("usage text lists every option") {
                                "--wifi-internet",
                                "--pcap FILE",
                                "--flash-mount [NAME=]FILE",
+                               "--efuse FILE|HEX|key:W0,W1,W2,W3",
                                "--print-config",
                                "-h, --help",
                                "BKEMU_PROFILES"})
@@ -321,4 +322,18 @@ TEST_CASE("cli flash mount errors") {
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--flash-mount", "FLASH="}) == "--flash-mount needs [NAME=]FILE");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--flash-mount", ""}) == "--flash-mount needs [NAME=]FILE");
     CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--flash-mount"}) == "--flash-mount needs a value");
+}
+
+TEST_CASE("cli efuse takes a file, hex or a key, once") {
+    CHECK_FALSE(parse({"BK7252", "--load", "ram:x.bin"}).efuse);
+    CliOptions o = parse({"BK7252", "--load", "ram:x.bin", "--efuse", "key:510fb093,a3cbeadc,5993a17e,c7adeb03"});
+    REQUIRE(o.efuse);
+    CHECK(o.efuse->kind == EfuseSpec::Kind::Key);
+    CHECK(o.efuse->key == FlashKey{0x510FB093, 0xA3CBEADC, 0x5993A17E, 0xC7ADEB03});
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--efuse=93b0"}).efuse->kind == EfuseSpec::Kind::Bytes);
+    CHECK(parse({"BK7252", "--load", "ram:x.bin", "--efuse", "efuse.bin"}).efuse->file == "efuse.bin");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--efuse", "a.bin", "--efuse", "b.bin"}) == "--efuse given twice");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--efuse", "abc"}) ==
+          "--efuse HEX needs an even number of hex digits, up to 64");
+    CHECK(error_of({"BK7252", "--load", "ram:x.bin", "--efuse"}) == "--efuse needs a value");
 }

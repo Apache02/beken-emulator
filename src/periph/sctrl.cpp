@@ -19,10 +19,11 @@ Sctrl::Sctrl(std::string                       name,
              std::map<uint32_t, uint32_t>      reset_words,
              std::map<uint32_t, uint32_t>      warm_reset_words,
              std::map<std::string, SignalSpec> signals,
-             std::vector<ReadAdjust>           read_adjust)
+             std::vector<ReadAdjust>           read_adjust,
+             SiteSource                        cpu_site)
     : name_(std::move(name)), chip_id_(chip_id), device_id_(device_id), reset_words_(std::move(reset_words)),
       warm_reset_words_(std::move(warm_reset_words)), words_(reset_words_), signals_(std::move(signals)),
-      read_adjust_(std::move(read_adjust)) {}
+      read_adjust_(std::move(read_adjust)), efuse_(std::move(cpu_site)) {}
 
 uint32_t Sctrl::stored(uint32_t offset) const {
     auto it = words_.find(offset);

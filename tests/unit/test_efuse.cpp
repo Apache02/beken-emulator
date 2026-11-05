@@ -1,5 +1,12 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include "core/log.h"
 #include "periph/efuse.h"
 
 using namespace bk;
@@ -73,4 +80,35 @@ TEST_CASE("efuse reset clears the registers and keeps the fuses") {
     CHECK(e.read(Efuse::kCtrl) == 0);
     CHECK(e.read(Efuse::kOptr) == 0);
     CHECK(fuse(e, 9) == 0x3C);
+}
+
+TEST_CASE("efuse preset sets the bytes from byte 0 and blanks the rest") {
+    Efuse e;
+    e.write(Efuse::kCtrl, ctrl(20, 0x11, true));
+    const uint8_t bytes[] = {0x93, 0xB0, 0x0F};
+    e.preset(bytes);
+    CHECK(fuse(e, 0) == 0x93);
+    CHECK(fuse(e, 2) == 0x0F);
+    CHECK(fuse(e, 3) == 0);
+    CHECK(fuse(e, 20) == 0);
+    CHECK(e.fuses()[1] == 0xB0);
+    const std::vector<uint8_t> too_many(33, 1);
+    CHECK_THROWS_WITH_AS(e.preset(too_many), "the eFuse has 32 bytes, not 33", std::invalid_argument);
+}
+
+TEST_CASE("efuse write is a warning naming the byte, the bits and the CPU site") {
+    std::ostringstream out;
+    Logger::reset_for_tests();
+    Logger::configure(out, false);
+    Efuse e([] { return CodeSite{0x1234, 0x5678}; });
+    e.write(Efuse::kCtrl, ctrl(4, 0x81, true));
+    e.write(Efuse::kCtrl, ctrl(4, 0x18, true));
+    e.write(Efuse::kCtrl, ctrl(4));
+    Logger::reset_for_tests();
+    const std::string log = out.str();
+    CHECK(log.find("eFuse byte 4 burnt with 0x81: 0x00 -> 0x81 by pc 0x00001234, lr 0x00005678") != std::string::npos);
+    CHECK(log.find("eFuse byte 4 burnt with 0x18: 0x81 -> 0x99") != std::string::npos);
+    CHECK(log.find("[W]") != std::string::npos);
+    // A read is not logged.
+    CHECK(std::count(log.begin(), log.end(), '\n') == 2);
 }

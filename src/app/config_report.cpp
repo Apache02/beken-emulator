@@ -306,6 +306,11 @@ std::string config_report(const CliOptions &options, const Profile &profile, Mac
     std::ostringstream out;
     out << "profile   " << profile.name << '\n';
     out << "cpu       " << profile.insns_per_us << " insns/us\n";
+    // Only SCTRL has an eFuse.
+    if (has_module("SCTRL", "sctrl"))
+        out << "efuse     " << (options.efuse ? describe(*options.efuse) : "key detected from the image") << '\n';
+    else if (options.efuse)
+        throw std::invalid_argument("--efuse needs a profile with an SCTRL module");
 
     for (const ModuleSpec *flash : flashes) {
         Block block;

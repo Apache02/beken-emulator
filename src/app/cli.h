@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "app/efuse_option.h"
 #include "core/loader.h"
 #include "core/log.h"
 #include "net/forwarder.h"
@@ -31,6 +32,9 @@ struct CliOptions {
     // `--flash-mount [NAME=]FILE` in command-line order: (flash module name or
     // empty for the profile's only flash, file). Names are checked later.
     std::vector<std::pair<std::string, std::string>> flash_mounts;
+    // `--efuse`: what the eFuse holds at start; without it the key of the
+    // flash cipher is detected from the image.
+    std::optional<EfuseSpec> efuse;
     // `-p`/`--publish`, in command-line order.
     std::vector<Publish> publish;
     // `--ssid`: the only network the virtual station joins.
@@ -52,7 +56,8 @@ struct CliOptions {
 // PROFILE [--load TARGET:FILE]... [--log-level NAME=LEVEL]... [--uart NAME=SPEC]...
 //         [--i2c NAME=TYPE[@ADDRESS]]... [-p [HOST_IP:]HOST_PORT:GUEST_PORT[/tcp|/udp]]...
 //         [--ssid NAME | --wifi-ap SSID [--wifi-password PASS] [--wifi-channel N] [--wifi-internet]]
-//         [--pcap FILE] [--flash-mount [NAME=]FILE]... [--print-config]
+//         [--pcap FILE] [--flash-mount [NAME=]FILE]... [--efuse FILE|HEX|key:W0,W1,W2,W3]
+//         [--print-config]
 //
 // `--uart1 SPEC` and `--uart2 SPEC` mean `--uart UART1=SPEC` and
 // `--uart UART2=SPEC`; `--i2c1 TYPE[@ADDRESS]` means `--i2c I2C1=TYPE[@ADDRESS]`, and likewise `--i2c2`.
@@ -63,7 +68,8 @@ struct CliOptions {
 // or `--flash-mount` is needed. Throws CliError, e.g. `at least one --load or
 // --flash-mount is required`, `--uart needs NAME=SPEC`, `--log-level needs
 // NAME=LEVEL` or `--i2c needs NAME=TYPE[@ADDRESS]`; a
-// bad `--publish` gives the message of parse_publish. `--wifi-password` and
+// bad `--publish` gives the message of parse_publish and a bad `--efuse` that
+// of parse_efuse; `--efuse` may be given once. `--wifi-password` and
 // `--wifi-channel` and `--wifi-internet` need `--wifi-ap`, which excludes `--ssid`. Whether the
 // profile has a MAC to publish to is checked later.
 // `-h`/`--help` stops parsing at once and returns with `help` set; no profile

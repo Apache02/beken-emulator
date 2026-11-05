@@ -113,6 +113,31 @@ the physical image with the CRC bytes, like the `_crc.bin` files, and is locked
 while an emulator uses it. `--flash-mount NAME=FILE` picks the flash module
 `NAME` when a profile has more than one.
 
+### Encrypted images and the eFuse
+
+The flash controller decrypts what the CPU reads through the XIP window with a
+key from eFuse bytes 0..15; reads, programs and erases through the flash
+registers see the physical bytes. A blank eFuse turns the cipher off. Images
+from Tuya devices, for example, are encrypted, and only in the CRC-framed XIP
+part: the data at the end of the flash is stored as it is.
+
+Without options the emulator looks for the vector table every Beken image
+starts with, plain or under a known key (for now the Tuya one), and puts the
+key it finds into the eFuse; an image that matches no key gets a warning.
+`--efuse` gives the eFuse contents instead:
+
+```
+build/bkemu BK7252 --load bootloader:dump.bin --efuse efuse.bin
+build/bkemu BK7252 --load bootloader:dump.bin --efuse 93b00f51dceacba37ea1935903ebadc7
+build/bkemu BK7252 --load bootloader:dump.bin --efuse key:510fb093,a3cbeadc,5993a17e,c7adeb03
+```
+
+A file is an eFuse dump of up to 32 bytes; hex digits are the bytes from byte
+0 on; `key:` gives just the key as the four words tools print, the rest of the
+eFuse blank. The key is taken at every reset, as the chip does when it starts.
+A firmware write to the eFuse sets bits for good, so each one is a warning in
+the log; the eFuse is not saved when the emulator stops.
+
 ### WiFi
 
 The WiFi MAC (module `MAC`) is an open access point to the firmware. With
