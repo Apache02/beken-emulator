@@ -1,0 +1,11 @@
+# BK7231 with a 4 MiB flash instead of the 2 MiB one: everything else is the
+# BK7231 profile. The XIP window stays at 2 MiB, firmware does not read the
+# flash through it beyond that; the rest is read through the flash registers.
+extends = "BK7231"
+name = "BK7231_4M"
+
+[[module]]
+name = "FLASH"
+[module.params]
+size = 0x400000
+jedec_id = 0x000b4016

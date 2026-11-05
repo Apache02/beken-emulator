@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -466,6 +467,27 @@ TEST_CASE("BK7252_4M is BK7252 with a 4 MiB flash") {
     CHECK(flash->read("regs", 0x1C, 4) == 0x0400000F);
     CHECK(flash->xip_size() == 0x200000);
     // The 2 MiB profile is untouched.
+    Machine small(base, builtin_registry());
+    CHECK(dynamic_cast<Flash *>(small.module("FLASH"))->size() == 0x200000);
+}
+
+TEST_CASE("BK7231_4M is BK7231 with a 4 MiB flash") {
+    Profile base = load_profile("BK7231", BK_PROFILES_DIR);
+    Profile big  = load_profile("BK7231_4M", BK_PROFILES_DIR);
+    CHECK(big.name == "BK7231_4M");
+    CHECK(big.modules.size() == base.modules.size());
+    CHECK(big.memory.size() == base.memory.size());
+    Machine machine(big, builtin_registry());
+    auto   *flash = dynamic_cast<Flash *>(machine.module("FLASH"));
+    REQUIRE(flash);
+    CHECK(flash->size() == 0x400000);
+    CHECK(flash->read("regs", 0x10, 4) == 0x000B4016);
+    CHECK(flash->xip_size() == 0x200000);
+    // The TCM of the BK7231 is kept.
+    auto tcm = std::find_if(big.memory.begin(), big.memory.end(), [](const auto &m) { return m.name == "TCM"; });
+    REQUIRE(tcm != big.memory.end());
+    CHECK(tcm->base == 0x003F0000);
+    CHECK(tcm->size == 0x10000);
     Machine small(base, builtin_registry());
     CHECK(dynamic_cast<Flash *>(small.module("FLASH"))->size() == 0x200000);
 }
