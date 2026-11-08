@@ -26,11 +26,11 @@
 #include "net/network.h"
 #include "net/pcap.h"
 #include "net/router/router_network.h"
+#include "periph/dummy.h"
 #include "periph/flash.h"
 #include "i2c/device.h"
 #include "periph/sctrl.h"
 #include "periph/uart.h"
-#include "periph/unknown.h"
 #include "periph/wifi/mac.h"
 
 namespace {
@@ -146,7 +146,7 @@ int run(int argc, char **argv) {
         if (options.wifi_ap) {
             // The access point is heard only while the firmware's radio is
             // tuned to its channel, which the RC stand-in holds.
-            auto                         *rc = dynamic_cast<bk::Unknown *>(machine.module("RC"));
+            auto                         *rc = dynamic_cast<bk::Dummy *>(machine.module("RC"));
             bk::AccessPoint::TunedChannel tuned;
             if (rc) tuned = [rc] { return bk::channel_from_rc(rc->peek(0x94)); };
             radio = tuned;

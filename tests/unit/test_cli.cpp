@@ -138,11 +138,11 @@ TEST_CASE("cli log levels are repeatable and keep their order") {
                           "--log-level",
                           "all=DEBUG",
                           "--log-level",
-                          "unknown=warning",
+                          "dummy=warning",
                           "--log-level=net.stack=Error"});
     CHECK(o.log_levels == std::vector<std::pair<std::string, Level>>{
                               {"all",       Level::Debug  },
-                              {"unknown",   Level::Warning},
+                              {"dummy",     Level::Warning},
                               {"net.stack", Level::Error  }
     });
 }

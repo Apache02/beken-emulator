@@ -20,7 +20,7 @@ namespace bk {
 //
 // The bus reaches a module with whole words at word addresses only (it widens
 // narrow loads and stores itself); a read past the end of the block returns 0.
-class Unknown : public Module {
+class Dummy : public Module {
   public:
     // `size` is in bytes (rounded up to whole words). `reset_words` maps a
     // word-aligned offset inside the block to its start value; throws
@@ -28,12 +28,12 @@ class Unknown : public Module {
     // `level` is the level of the access log lines. `self_clear` maps an offset
     // (checked as `reset_words`) to the bits that read 0 after any write: a
     // command bit whose operation completes at once.
-    Unknown(std::string                  name,
-            uint32_t                     size,
-            std::map<uint32_t, uint32_t> reset_words,
-            SiteSource                   site,
-            Level                        level      = Level::Info,
-            std::map<uint32_t, uint32_t> self_clear = {});
+    Dummy(std::string                  name,
+          uint32_t                     size,
+          std::map<uint32_t, uint32_t> reset_words,
+          SiteSource                   site,
+          Level                        level      = Level::Info,
+          std::map<uint32_t, uint32_t> self_clear = {});
 
     std::string        name() const override { return name_; }
     std::vector<Range> ranges() const override {

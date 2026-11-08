@@ -207,7 +207,7 @@ string logger_of(const string &type) {
 
 string module_level(const ModuleSpec &m) {
     // The stand-ins log their accesses at the level of their log_level parameter.
-    if (m.type == "unknown" || m.type == "sdhost") {
+    if (m.type == "dummy" || m.type == "sdhost") {
         const ParamValue *v = m.params.find("log_level");
         if (v && v->string()) {
             if (auto level = Logger::parse_level(*v->string())) return level_text(*level);

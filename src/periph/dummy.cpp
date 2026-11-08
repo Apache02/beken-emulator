@@ -1,4 +1,4 @@
-#include "periph/unknown.h"
+#include "periph/dummy.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -9,14 +9,14 @@
 
 namespace bk {
 
-Unknown::Unknown(std::string                  name,
-                 uint32_t                     size,
-                 std::map<uint32_t, uint32_t> reset_words,
-                 SiteSource                   site,
-                 Level                        level,
-                 std::map<uint32_t, uint32_t> self_clear)
-    : name_(std::move(name)), size_(size), reset_words_(std::move(reset_words)), site_(std::move(site)),
-      level_(level), self_clear_(std::move(self_clear)), words_((uint64_t{size} + 3) / 4, 0) {
+Dummy::Dummy(std::string                  name,
+             uint32_t                     size,
+             std::map<uint32_t, uint32_t> reset_words,
+             SiteSource                   site,
+             Level                        level,
+             std::map<uint32_t, uint32_t> self_clear)
+    : name_(std::move(name)), size_(size), reset_words_(std::move(reset_words)), site_(std::move(site)), level_(level),
+      self_clear_(std::move(self_clear)), words_((uint64_t{size} + 3) / 4, 0) {
     auto check = [this](const std::map<uint32_t, uint32_t> &words, const char *what) {
         for (const auto &[offset, word] : words) {
             if (offset % 4 != 0 || offset / 4 >= words_.size())
@@ -29,19 +29,19 @@ Unknown::Unknown(std::string                  name,
     reset();
 }
 
-void Unknown::reset() {
+void Dummy::reset() {
     std::fill(words_.begin(), words_.end(), 0);
     for (const auto &[offset, word] : reset_words_) words_[offset / 4] = word;
 }
 
-uint32_t Unknown::read(const std::string &, uint32_t offset, uint32_t size) {
+uint32_t Dummy::read(const std::string &, uint32_t offset, uint32_t size) {
     // The bus passes whole-word reads only.
     const uint32_t value = offset / 4 < words_.size() ? words_[offset / 4] : 0;
     report("read", offset, size, value);
     return value;
 }
 
-void Unknown::write(const std::string &, uint32_t offset, uint32_t size, uint32_t value) {
+void Dummy::write(const std::string &, uint32_t offset, uint32_t size, uint32_t value) {
     if (size < 4) value &= (1u << (size * 8)) - 1;
     report("write", offset, size, value);
     if (offset / 4 >= words_.size()) return;
@@ -56,7 +56,7 @@ void Unknown::write(const std::string &, uint32_t offset, uint32_t size, uint32_
     if (auto it = self_clear_.find(offset & ~3u); it != self_clear_.end()) word &= ~it->second;
 }
 
-void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t value) {
+void Dummy::report(const char *what, uint32_t offset, uint32_t size, uint32_t value) {
     if (level_ == Level::None) return;
 
     char text[160];
@@ -69,7 +69,7 @@ void Unknown::report(const char *what, uint32_t offset, uint32_t size, uint32_t 
                   size,
                   static_cast<int>(size * 2),
                   value);
-    Logger::get("unknown").log(level_, site_ ? text + by_site(site_()) : std::string(text));
+    Logger::get("dummy").log(level_, site_ ? text + by_site(site_()) : std::string(text));
 }
 
 } // namespace bk

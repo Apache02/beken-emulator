@@ -390,13 +390,13 @@ TEST_CASE("unknown module type error text") {
     };
     // The known types are listed in registry order, so the full text changes with every new module type.
     CHECK_THROWS_WITH_AS(Machine(p, builtin_registry()),
-                         doctest::Contains("unknown module type 'bogus' (known: ble_core, flash, "),
+                         doctest::Contains("unknown module type 'bogus' (known: ble_core, dummy, flash,"),
                          std::invalid_argument);
 }
 
-TEST_CASE("unknown and wifi_mac take a log_level for their stand-in registers") {
+TEST_CASE("dummy and wifi_mac take a log_level for their stand-in registers") {
     Profile    p = chip();
-    ModuleSpec blk{"unknown", "BLK", {{"regs", 0x00802D00}}, {}};
+    ModuleSpec blk{"dummy", "BLK", {{"regs", 0x00802D00}}, {}};
     ModuleSpec mac{
         "wifi_mac", "MAC", {{"core", 0xC0000000}, {"pl", 0xC0008000}, {"pta", 0xC0010000}},
           {}

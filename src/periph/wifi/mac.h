@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "core/module.h"
-#include "periph/unknown.h"
+#include "periph/dummy.h"
 #include "periph/wifi/air.h"
 #include "periph/wifi/frame_engine.h"
 
@@ -19,7 +19,7 @@ namespace bk {
 // 0xC0010000, a stand-in with no behaviour of its own): the registers
 // the firmware uses to run the MAC state machine, its interrupts and timers,
 // and the DMA control command that starts the frame engine. Registers that only store a value are stand-ins
-// (plain memory that logs its accesses, see Unknown); the ones with behaviour
+// (plain memory that logs its accesses, see Dummy); the ones with behaviour
 // are served here:
 //
 // - counters 0x11C / 0x120 / 0x124 and the platform bank's TSF 0x0A4 / 0x0A8,
@@ -121,7 +121,7 @@ class WifiMac : public Module {
     const Clock            &clock_;
     Signal                  powered_;
     Lines                   lines_;
-    Unknown                 core_, pl_, pta_;
+    Dummy                   core_, pl_, pta_;
     std::optional<uint64_t> start_;
     uint64_t                offset_us_  = 0;
     uint32_t                lo_written_ = 0;

@@ -62,7 +62,7 @@ TEST_CASE("stop_report names the modules wired to the interrupt sources") {
           {{"intc", "ICU"}, {"irq", 8}}
     });
     p.modules.push_back({
-        "unknown", "MAC", {{"regs", 0x803800}},
+        "dummy", "MAC", {{"regs", 0x803800}},
           {{"intc", "ICU"}, {"irq", ParamTable{{"rx", 19}, {"tx", 20}}}}
     });
     Machine machine(p, builtin_registry());

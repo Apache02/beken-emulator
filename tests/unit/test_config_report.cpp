@@ -35,7 +35,7 @@ Profile profile() {
         "wifi_mac", "MAC", {{"core", 0xC0000000}, {"pl", 0xC0008000}, {"pta", 0xC0010000}},
           {}
     });
-    p.modules.push_back({"unknown", "RC", {{"regs", 0x1050000}}, {{"log_level", "debug"}}});
+    p.modules.push_back({"dummy", "RC", {{"regs", 0x1050000}}, {{"log_level", "debug"}}});
     return p;
 }
 
@@ -87,7 +87,7 @@ TEST_CASE("config report of a bare command line") {
                                   "├─ I2C1   i2c1      0x00802300       0x8     info   -\n"
                                   "├─ FLASH  flash     0x00803000       0x28    info   -\n"
                                   "├─ GDMA   gdma      0x00809000       0x200   info   -\n"
-                                  "├─ RC     unknown   0x01050000       0x100   debug  -\n"
+                                  "├─ RC     dummy     0x01050000       0x100   debug  -\n"
                                   "└─ MAC    wifi_mac  core 0xC0000000  0x1580  info   -\n"
                                   "                    pl   0xC0008000  0x57C\n"
                                   "                    pta  0xC0010000  0x28\n"
@@ -149,7 +149,7 @@ TEST_CASE("config report takes the log levels from the loggers") {
     CHECK(text.find("GDMA   gdma      0x00809000       0x200   warning  -\n") != std::string::npos);
     CHECK(text.find("I2C1   i2c1      0x00802300       0x8     none") != std::string::npos);
     // A stand-in logs at the level of its log_level parameter.
-    CHECK(text.find("RC     unknown   0x01050000       0x100   debug") != std::string::npos);
+    CHECK(text.find("RC     dummy     0x01050000       0x100   debug") != std::string::npos);
 }
 
 TEST_CASE("config report of a WiFi access point, a pcap file and published ports") {

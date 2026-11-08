@@ -4,12 +4,13 @@
 
 namespace bk {
 
-// Factories for every built-in module type: ble_core, flash, gdma, gpio, i2c1,
-// i2c2, intc, jpeg, saradc, sctrl, timer, trng, uart, unknown, wdt, wifi_mac.
+// Factories for every built-in module type: ble_core, dummy, flash, gdma, gpio,
+// i2c1, i2c2, intc, jpeg, saradc, sctrl, timer, trng, uart, wdt, wifi_mac.
 //
 // Parameters each type reads (anything else is ignored):
 //   ble_core: em_size (bytes of the exchange memory, base "em", a multiple of
 //          4, default 0x2000); registers at base "regs", see BleCore
+//   dummy: size (default 0x100), reset_words (as for intc)
 //   flash: size (default 0x200000), jedec_id (default 0x1C7015), xip_size (the
 //          XIP window, a multiple of 4096 up to 0x200000; by default the data of
 //          every block up to 0x200000; its address is the base "xip"),
@@ -42,7 +43,6 @@ namespace bk {
 //          card in the slot, see SdHost
 //   timer: irq, hz (default 26000000)
 //   trng:  no parameters
-//   unknown: size (default 0x100), reset_words (as for intc)
 //   wifi_mac: mac_powered (signal; always powered without one); ranges core,
 //          pl and pta; only the monotonic counters are emulated, the other
 //          registers are stand-ins

@@ -38,7 +38,7 @@ build/bkemu BK7252 \
   -p 8080:80 -p 2323:23 \
   --i2c1 hi704 \
   --uart2 stdio \
-  --log-level unknown=warning
+  --log-level dummy=warning
 ```
 
 Once the line `associated with 'Beken-72838a'` has appeared, open

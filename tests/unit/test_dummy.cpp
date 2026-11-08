@@ -7,7 +7,7 @@
 #include <string>
 
 #include "core/log.h"
-#include "periph/unknown.h"
+#include "periph/dummy.h"
 
 using namespace bk;
 
@@ -16,7 +16,7 @@ namespace {
 struct Fixture {
     std::ostringstream out;
     CodeSite           site{};
-    Unknown            block;
+    Dummy              block;
 
     explicit Fixture(uint32_t size = 0x100, std::map<uint32_t, uint32_t> words = {}, bool with_source = true)
         : block("BLK", size, std::move(words), with_source ? SiteSource([this] { return site; }) : nullptr) {
@@ -31,14 +31,14 @@ struct Fixture {
 
 } // namespace
 
-TEST_CASE("unknown has one range of the configured size") {
+TEST_CASE("dummy has one range of the configured size") {
     Fixture f(192);
     REQUIRE(f.block.ranges().size() == 1);
     CHECK(f.block.ranges()[0].name == "regs");
     CHECK(f.block.ranges()[0].size == 192);
 }
 
-TEST_CASE("unknown holds 32-bit registers with start words") {
+TEST_CASE("dummy holds 32-bit registers with start words") {
     Fixture f(0x40,
               {
                   {0x38, 0x0000f000},
@@ -51,7 +51,7 @@ TEST_CASE("unknown holds 32-bit registers with start words") {
     CHECK(f.r(0x10) == 0xAABBCCDD);
 }
 
-TEST_CASE("unknown reads 0 past the end of the block") {
+TEST_CASE("dummy reads 0 past the end of the block") {
     Fixture f(0x40,
               {
                   {0x3C, 0xAABBCCDD}
@@ -61,7 +61,7 @@ TEST_CASE("unknown reads 0 past the end of the block") {
     CHECK(f.r(0x1000) == 0);
 }
 
-TEST_CASE("unknown narrow writes change only their bytes of the word") {
+TEST_CASE("dummy narrow writes change only their bytes of the word") {
     Fixture f;
     f.w(0x10, 0x11223344);
     f.w(0x10, 0xAABBCCDD, 1);
@@ -74,7 +74,7 @@ TEST_CASE("unknown narrow writes change only their bytes of the word") {
     CHECK(f.r(0x10) == 0x55661234);
 }
 
-TEST_CASE("unknown writes outside the block or across a word are dropped") {
+TEST_CASE("dummy writes outside the block or across a word are dropped") {
     Fixture f(0x10);
     f.w(0x10, 0xFFFFFFFF);
     f.w(0x100, 1);
@@ -83,32 +83,32 @@ TEST_CASE("unknown writes outside the block or across a word are dropped") {
     for (uint32_t off = 0; off < 0x10; off += 4) CHECK(f.r(off) == 0);
 }
 
-TEST_CASE("unknown size is rounded up to whole words") {
+TEST_CASE("dummy size is rounded up to whole words") {
     Fixture f(6);
     f.w(4, 0xAABBCCDD);
     CHECK(f.r(4) == 0xAABBCCDD);
     CHECK(f.block.ranges()[0].size == 6);
 }
 
-TEST_CASE("unknown start words must be words inside the block") {
+TEST_CASE("dummy start words must be words inside the block") {
     for (uint32_t offset : {1u, 2u, 0x40u, 0x1000u}) {
-        CHECK_THROWS_AS(Unknown("BLK",
-                                0x40,
-                                {
-                                    {offset, 1}
+        CHECK_THROWS_AS(Dummy("BLK",
+                              0x40,
+                              {
+                                  {offset, 1}
         },
-                                nullptr),
+                              nullptr),
                         std::invalid_argument);
     }
-    CHECK_NOTHROW(Unknown("BLK",
-                          0x40,
-                          {
-                              {0x3C, 1}
+    CHECK_NOTHROW(Dummy("BLK",
+                        0x40,
+                        {
+                            {0x3C, 1}
     },
-                          nullptr));
+                        nullptr));
 }
 
-TEST_CASE("unknown reset restores the start values") {
+TEST_CASE("dummy reset restores the start values") {
     Fixture f(0x40,
               {
                   {0x08, 7}
@@ -120,7 +120,7 @@ TEST_CASE("unknown reset restores the start values") {
     CHECK(f.r(0x10) == 0);
 }
 
-TEST_CASE("unknown logs every access with the pc and lr that made it") {
+TEST_CASE("dummy logs every access with the pc and lr that made it") {
     Fixture f;
     f.site = {0x00087828, 0x00087801};
     f.w(0x10, 0xAB);
@@ -131,20 +131,20 @@ TEST_CASE("unknown logs every access with the pc and lr that made it") {
           std::string::npos);
 }
 
-TEST_CASE("unknown without a site source logs the access alone") {
+TEST_CASE("dummy without a site source logs the access alone") {
     Fixture f(0x100, {}, false);
     f.w(0x04, 1);
     CHECK(f.out.str().find("BLK write +0x0004 (4 bytes) = 0x00000001\n") != std::string::npos);
 }
 
-TEST_CASE("unknown self_clear bits read 0 after a write, the other bits are kept") {
-    Unknown block("BLK",
-                  0x40,
-                  {
+TEST_CASE("dummy self_clear bits read 0 after a write, the other bits are kept") {
+    Dummy block("BLK",
+                0x40,
+                {
     },
-                  nullptr,
-                  Level::None,
-                  {{0x08, 0x80000000}});
+                nullptr,
+                Level::None,
+                {{0x08, 0x80000000}});
     block.write("regs", 0x08, 4, 0x90F8FFA7);
     CHECK(block.read("regs", 0x08, 4) == 0x10F8FFA7);
     block.write("regs", 0x0B, 1, 0xFF); // a byte write to the top byte
@@ -153,13 +153,13 @@ TEST_CASE("unknown self_clear bits read 0 after a write, the other bits are kept
     CHECK(block.read("regs", 0x0C, 4) == 0x80000000);
 }
 
-TEST_CASE("unknown self_clear offsets must be words inside the block") {
-    CHECK_THROWS_AS(Unknown("BLK",
-                            0x40,
-                            {
+TEST_CASE("dummy self_clear offsets must be words inside the block") {
+    CHECK_THROWS_AS(Dummy("BLK",
+                          0x40,
+                          {
     },
-                            nullptr,
-                            Level::None,
-                            {{0x40, 1}}),
+                          nullptr,
+                          Level::None,
+                          {{0x40, 1}}),
                     std::invalid_argument);
 }
