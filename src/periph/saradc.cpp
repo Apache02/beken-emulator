@@ -8,7 +8,7 @@ namespace bk {
 namespace {
 
 constexpr uint32_t kConfig = 0x00, kData = 0x04, kCtrlCfg = 0x08, kSaturationCfg = 0x0C, kDatAfterSta = 0x10;
-constexpr uint32_t kChnlEn = 1u << 2, kIntClr = 1u << 8;
+constexpr uint32_t kChnlEn = 1u << 2, kIntClr = 1u << 8, kCalibTrig = 1u << 8;
 constexpr uint32_t kBusy = 1u << 29, kFifoEmpty = 1u << 30, kFifoFull = 1u << 31;
 constexpr uint32_t kStatus       = kBusy | kFifoEmpty | kFifoFull;
 constexpr uint32_t kDepth        = 32;
@@ -34,7 +34,7 @@ uint32_t Saradc::read(const std::string &, uint32_t offset, uint32_t) {
 void Saradc::write(const std::string &, uint32_t offset, uint32_t, uint32_t value) {
     switch (offset) {
         case kConfig: write_config(value); break;
-        case kCtrlCfg: ctrl_cfg_ = value; break;
+        case kCtrlCfg: ctrl_cfg_ = value & ~kCalibTrig; break;
         case kSaturationCfg: saturation_cfg_ = value; break;
         default: break;
     }

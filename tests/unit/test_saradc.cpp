@@ -145,6 +145,12 @@ TEST_CASE("saradc ctrl_cfg and saturation_cfg are plain words") {
     CHECK(f.r(0x14) == 0);
 }
 
+TEST_CASE("saradc ctrl_cfg calib_trig reads back clear and keeps the other bits") {
+    Fixture f;
+    f.w(kCtrlCfg, 0x000006E0 | 1u << 8);
+    CHECK(f.r(kCtrlCfg) == 0x000006E0);
+}
+
 TEST_CASE("saradc reset stops everything") {
     Fixture f;
     f.w(kCtrlCfg, 5);

@@ -9,10 +9,12 @@
 
 namespace bk {
 
-// SAR ADC without an analog input. While `config.chnl_en` is set a sample
-// arrives every 100 us of device time in a 32-sample FIFO; every sample reads
-// `sample`. The interrupt is raised once ctrl_cfg.almost_cfg samples wait (at
-// least one) and stays until config.int_clr is written.
+// SAR ADC without an analog input, for the BK7231*, BK7221U and BK7236. While
+// `config.chnl_en` is set a sample arrives every 100 us of device time in a
+// 32-sample FIFO; every sample reads `sample`. The interrupt is raised once
+// ctrl_cfg.almost_cfg samples wait (at least one) and stays until
+// config.int_clr is written. ctrl_cfg.calib_trig (BK7231N, BK7236): the
+// calibration completes at once, so the bit reads back clear.
 class Saradc : public Module {
   public:
     // `irq` may be empty.

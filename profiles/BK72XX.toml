@@ -173,6 +173,16 @@ regs = 0x01050000
 size = 480
 log_level = "debug"
 
+# MAC-PHY bypass: test vectors for the PHY; the WiFi driver clears it at start.
+[[module]]
+type = "unknown"
+name = "MPB"
+[module.bases]
+regs = 0x01060000
+[module.params]
+size = 0x250
+log_level = "debug"
+
 [[module]]
 type = "unknown"
 name = "NX_INTC"

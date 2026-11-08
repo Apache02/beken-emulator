@@ -73,16 +73,6 @@ name = "SAR_ADC"
 type = "i2c2"
 name = "I2C1"
 
-# MAC-PHY bypass: test vectors for the PHY; the WiFi driver clears it at start.
-[[module]]
-type = "unknown"
-name = "MPB"
-[module.bases]
-regs = 0x01060000
-[module.params]
-size = 0x250
-log_level = "debug"
-
 # The BLE 5.2 core (IP core and BLE core registers share the base); its
 # exchange memory is in RAM.
 [[module]]
