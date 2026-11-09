@@ -126,6 +126,14 @@ int run(int argc, char **argv) {
         controller->attach(device.get());
     }
 
+    // A write to a closed stdout must not kill the emulator.
+    std::signal(SIGPIPE, SIG_IGN);
+    // Installed before anything is printed, so whoever reads the output can ask
+    // for a stop at once, and before the endpoints exist, so a stop request can
+    // never leave a terminal in raw mode; the run loop below checks the flag
+    // before each step.
+    StopSignals stop_signals;
+
     // Declared after the machine, so it goes first; the MAC is detached from it
     // before that.
     std::unique_ptr<bk::Network>       network;
@@ -177,12 +185,6 @@ int run(int argc, char **argv) {
         }
         mac->attach(air);
     }
-
-    // A write to a closed stdout must not kill the emulator.
-    std::signal(SIGPIPE, SIG_IGN);
-    // Installed before the endpoints exist, so a stop request can never leave a
-    // terminal in raw mode; the run loop below checks the flag before each step.
-    StopSignals stop_signals;
 
     // Declared after the machine: destroyed (and terminals restored) first.
     std::map<std::string, std::unique_ptr<bk::ByteEndpoint>> endpoints;
