@@ -15,6 +15,8 @@
 #include "core/machine.h"
 #include "core/profile_loader.h"
 #include "periph/flash.h"
+#include "periph/pwm_bk7231n.h"
+#include "periph/saradc_bk7238.h"
 
 using namespace bk;
 namespace fs = std::filesystem;
@@ -503,6 +505,26 @@ TEST_CASE("BK7231_4M is BK7231 with a 4 MiB flash") {
     CHECK(tcm->size == 0x10000);
     Machine small(base, builtin_registry());
     CHECK(dynamic_cast<Flash *>(small.module("FLASH"))->size() == 0x200000);
+}
+
+TEST_CASE("BK7238 is BK7231 with its own SAR ADC, PWM, ids and ITCM") {
+    Profile base = load_profile("BK7231", BK_PROFILES_DIR);
+    Profile p    = load_profile("BK7238", BK_PROFILES_DIR);
+    CHECK(p.name == "BK7238");
+    CHECK(p.modules.size() == base.modules.size());
+    CHECK(p.memory.size() == base.memory.size());
+    Machine machine(p, builtin_registry());
+    CHECK(dynamic_cast<SaradcBk7238 *>(machine.module("SAR_ADC")));
+    CHECK(dynamic_cast<PwmBk7231n *>(machine.module("PWM")));
+    auto pwm = std::find_if(p.modules.begin(), p.modules.end(), [](const auto &m) { return m.name == "PWM"; });
+    REQUIRE(pwm != p.modules.end());
+    CHECK(pwm->bases.at("regs") == 0x00802B00);
+    CHECK(machine.module("SCTRL")->read("regs", 0, 4) == 0x00007238);
+    CHECK(machine.module("SCTRL")->read("regs", 4, 4) == 0x22068000);
+    auto tcm = std::find_if(p.memory.begin(), p.memory.end(), [](const auto &m) { return m.name == "TCM"; });
+    REQUIRE(tcm != p.memory.end());
+    CHECK(tcm->base == 0x003F0000);
+    CHECK(tcm->size == 0x4000);
 }
 
 TEST_CASE("lower case name rejected") {

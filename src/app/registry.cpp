@@ -22,6 +22,7 @@
 #include "periph/jpeg.h"
 #include "periph/jpeg_bk7252n.h"
 #include "periph/pwm.h"
+#include "periph/pwm_bk7231n.h"
 #include "periph/saradc.h"
 #include "periph/saradc_bk7238.h"
 #include "periph/sctrl.h"
@@ -259,6 +260,9 @@ ModuleRegistry builtin_registry() {
     };
     r["pwm"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Pwm>(ctx.name, ctx.clock, ctx.irq, u32_param(ctx, "hz", 26000000));
+    };
+    r["pwm_bk7231n"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
+        return std::make_unique<PwmBk7231n>(ctx.name, ctx.clock, ctx.irq, u32_param(ctx, "hz", 26000000));
     };
     r["timer"] = [](const ModuleContext &ctx) -> std::unique_ptr<Module> {
         return std::make_unique<Timer>(ctx.name, ctx.clock, ctx.irq, u32_param(ctx, "hz", 26000000));

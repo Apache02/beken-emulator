@@ -1,0 +1,42 @@
+# BK7238: the BK7231 with the blocks that are known to differ. The ITCM size and
+# the ids follow the vendor SDK.
+
+extends = "BK7231"
+name = "BK7238"
+
+# ITCM: 16 KiB at 0x003F0000 (vendor SDK linker script).
+[[memory]]
+name = "TCM"
+base = 0x003F0000
+size = 0x4000
+reset_fill = 0xAA
+
+[[module]]
+name = "SCTRL"
+[module.params]
+chip_id = 0x00007238
+device_id = 0x22068000  # BK7238 A
+
+# The FIFO flags are not those of the BK7231: firmware waits on bit 30 of the
+# state register. Base, interrupt and sample come from BK72XX.
+[[module]]
+type = "saradc_bk7238"
+name = "SAR_ADC"
+
+# Six channels, two per group of 0x40 bytes (vendor SDK pwm_bk7231n.h). The
+# interrupt and the clock come from BK7252. Nothing answers at the old PWM
+# address, 0x00802A80, which the vendor bootloader still touches: left running
+# there, the old PWM would hold up the interrupt line that the application's
+# handler clears here.
+[[module]]
+type = "pwm_bk7231n"
+name = "PWM"
+[module.bases]
+regs = 0x00802B00
+
+# The BK7252 audio block sits where this chip has its PWM. A profile cannot drop
+# an inherited module, so it is moved out of the way.
+[[module]]
+name = "AUDIO"
+[module.bases]
+regs = 0x00A06000

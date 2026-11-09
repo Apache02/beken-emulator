@@ -53,6 +53,7 @@ add_library(bk_core STATIC
         src/periph/jpeg_bk7252n.cpp
         src/periph/jpeg_stream.cpp
         src/periph/pwm.cpp
+        src/periph/pwm_bk7231n.cpp
         src/periph/saradc.cpp
         src/periph/saradc_bk7238.cpp
         src/periph/sctrl.cpp
@@ -125,6 +126,7 @@ add_executable(unit_tests
         tests/unit/test_dummy.cpp
         tests/unit/test_timer.cpp
         tests/unit/test_pwm.cpp
+        tests/unit/test_pwm_bk7231n.cpp
         tests/unit/test_uart.cpp
         tests/unit/test_wdt.cpp
         tests/unit/test_flash.cpp
