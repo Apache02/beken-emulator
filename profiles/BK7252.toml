@@ -86,8 +86,9 @@ log_level = "debug"
 
 # No sensor: a built-in picture is "captured" every frame_interval_ms and its
 # frame ends encode_ms later; its words reach the FIFO burst_words at a time,
-# evenly over that time, as a sensor would deliver them. The interrupt is FIQ source 29; dma_request 8 is
-# the GDMA's JPEG line.
+# evenly over that time, as a sensor would deliver them, and the frame ends
+# once the DMA has taken the last of them. The interrupt is FIQ source 29;
+# dma_request 8 is the GDMA's JPEG line.
 [[module]]
 type = "jpeg"
 name = "JPEG"

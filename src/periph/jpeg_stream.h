@@ -23,8 +23,10 @@ namespace bk {
 //
 // The encoder produces the stream at the pace of the sensor: `burst_words`
 // words reach the FIFO at a time, evenly spread over the encode time, so that
-// the last ones arrive when the frame ends. With `burst_words` 0 the whole
-// frame is in the FIFO from the start of the frame.
+// the last ones arrive at the end of the encode time. The frame then ends once
+// the FIFO is empty, or at the latest when the next frame starts. With
+// `burst_words` 0 the whole frame is in the FIFO from the start of the frame
+// and it ends after the encode time whether or not it was read.
 class JpegStream {
   public:
     // The events of a frame; they stay until cleared.
@@ -68,6 +70,7 @@ class JpegStream {
   private:
     void start_frame(uint64_t at_ns);
     void end_frame();
+    void finish_frame();
     void release();
     void drive();
 
@@ -79,7 +82,8 @@ class JpegStream {
     std::function<void()>        changed_;
 
     bool                    enabled_ = false, byte_reverse_ = false, size_trailer_ = false;
-    uint32_t                events_    = 0;
+    bool                    end_pending_ = false; // the encode time is over, the FIFO is not empty yet
+    uint32_t                events_      = 0;
     uint32_t                last_size_ = 0, frame_size_ = 0, last_word_ = 0;
     std::vector<uint8_t>    stream_;
     size_t                  offset_ = 0, released_ = 0; // bytes of stream_ that have reached the FIFO

@@ -53,8 +53,8 @@ JpegStream::JpegStream(const std::string           &name,
 }
 
 void JpegStream::reset() {
-    enabled_ = byte_reverse_ = size_trailer_ = false;
-    events_                                  = 0;
+    enabled_ = byte_reverse_ = size_trailer_ = end_pending_ = false;
+    events_                                                 = 0;
     last_size_ = frame_size_ = last_word_ = 0;
     stream_.clear();
     offset_ = released_ = 0;
@@ -72,6 +72,7 @@ void JpegStream::enable(bool on) {
         start_ns_.reset();
         end_ns_.reset();
         release_ns_.reset();
+        end_pending_ = false;
         stream_.clear();
         offset_ = released_ = 0;
         log().log(Level::Debug, "encoder disabled");
@@ -115,6 +116,7 @@ void JpegStream::tick(uint64_t now_ns) {
 }
 
 void JpegStream::start_frame(uint64_t at_ns) {
+    if (end_pending_) finish_frame();
     frame_size_ = static_cast<uint32_t>(picture_.size());
     stream_     = picture_;
     if (size_trailer_) {
@@ -149,10 +151,20 @@ void JpegStream::release() {
     release_ns_         = frame_ns_ + encode_ns_ * next / words;
 }
 
+// With bursts the encoder is done once its last words have left the FIFO, so
+// that the DMA has the whole frame when the end is signalled.
 void JpegStream::end_frame() {
-    last_size_ = frame_size_;
-    events_ |= kEnd;
     end_ns_.reset();
+    if (burst_words_ != 0 && !empty())
+        end_pending_ = true;
+    else
+        finish_frame();
+}
+
+void JpegStream::finish_frame() {
+    end_pending_ = false;
+    last_size_   = frame_size_;
+    events_ |= kEnd;
     log().log(Level::Debug, "end_frame: frame is " + std::to_string(last_size_) + " bytes");
 }
 
@@ -165,6 +177,7 @@ uint32_t JpegStream::pop() {
     }
     offset_ += 4;
     last_word_ = word;
+    if (end_pending_ && empty()) finish_frame();
     drive();
     return word;
 }

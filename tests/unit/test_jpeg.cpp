@@ -324,22 +324,86 @@ TEST_CASE("jpeg burst_words releases the stream in bursts spread over the encode
     CHECK(take() == 16);
     f.at(1112 * kMs + 500'000);
     CHECK(take() == 16);
-    // The last burst comes with the end of the frame, and the frame ends after it.
+    // The last burst comes with the end of the frame, and the frame ends once it has been read.
     CHECK(f.r(kStatus) == 1);
     CHECK(f.jpeg.next_event_ns() == std::optional<uint64_t>(1150 * kMs));
     f.at(1150 * kMs);
+    CHECK(f.r(kStatus) == 1);
     CHECK(take() == 16);
     CHECK(f.r(kStatus) == 3);
     CHECK(got == frame);
     CHECK(f.jpeg.next_event_ns() == std::optional<uint64_t>(2000 * kMs));
 }
 
+TEST_CASE("jpeg burst_words the end of frame waits until the DMA has taken the last burst") {
+    // The firmware's end of frame handler compares the bytes the DMA copied with the frame size.
+    FakeClock           clock;
+    auto                dma   = std::make_shared<RequestLine>();
+    size_t              words = 0;
+    std::vector<size_t> words_at_irq;
+    bool                line = false;
+    Jpeg                jpeg(
+        "JPEG",
+        clock,
+        [&](bool v) {
+            if (v && !line) words_at_irq.push_back(words);
+            line = v;
+        },
+        dma,
+        1000,
+        150,
+        picture(59),
+        4);
+    auto at = [&](uint64_t ns) {
+        clock.now = ns;
+        jpeg.tick(ns);
+    };
+    // The DMA takes one word at a time while its request line is up; the word
+    // read is counted as copied, as the CPU cannot run before the DMA stores it.
+    auto dma_step = [&] {
+        if (!dma->level()) return false;
+        ++words;
+        dma->read();
+        return true;
+    };
+    jpeg.write("regs", kCtrl0, 4, kEndInt);
+    jpeg.write("regs", kCtrl1, 4, kEncEn | kByteRev | kEncSize);
+    for (uint64_t t : {1000 * kMs, 1037 * kMs + 500'000, 1075 * kMs, 1112 * kMs + 500'000}) {
+        at(t);
+        while (dma_step()) {
+        }
+    }
+    CHECK(words == 12);
+    at(1150 * kMs);
+    CHECK(words_at_irq.empty()); // the last burst is still in the FIFO
+    CHECK(jpeg.read("regs", kStatus, 4) == 1);
+    CHECK(dma->level());
+    while (dma_step()) {
+    }
+    REQUIRE(words_at_irq.size() == 1);
+    CHECK(words_at_irq[0] == 16);
+    CHECK(jpeg.read("regs", kStatus, 4) == 3);
+    CHECK(jpeg.read("regs", kBytes, 4) == 59);
+}
+
+TEST_CASE("jpeg burst_words an undrained frame ends when the next one starts") {
+    Fixture f(picture(59), 4);
+    f.w(kCtrl1, kEncEn | kByteRev | kEncSize);
+    f.at(1150 * kMs);
+    CHECK(f.r(kStatus) == 1);
+    f.w(kStatus, 1);
+    f.at(2000 * kMs);
+    CHECK(f.r(kStatus) == 3);
+    CHECK(f.r(kBytes) == 59);
+}
+
 TEST_CASE("jpeg burst_words after a late tick, and when the encoder is disabled") {
     Fixture f(picture(59), 4);
     f.w(kCtrl1, kEncEn | kByteRev | kEncSize);
     f.at(1300 * kMs);
-    CHECK(f.r(kStatus) == 3);
+    CHECK(f.r(kStatus) == 1); // the frame ends once its words have been read
     CHECK(f.drain().size() == 64);
+    CHECK(f.r(kStatus) == 3);
     f.at(2020 * kMs); // the next frame has just begun
     CHECK(f.r(kState) == 1);
     f.at(2040 * kMs);
