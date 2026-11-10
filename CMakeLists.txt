@@ -42,6 +42,7 @@ add_library(bk_core STATIC
         src/periph/flash_cipher.cpp
         src/i2c/catalog.cpp
         src/i2c/register_device.cpp
+        src/i2c/transaction_logger.cpp
         src/periph/gdma.cpp
         src/periph/gdma_bk7252n.cpp
         src/periph/gdma_engine.cpp
@@ -118,6 +119,7 @@ add_executable(unit_tests
         tests/unit/test_i2c1.cpp
         tests/unit/test_i2c2.cpp
         tests/unit/test_i2c_devices.cpp
+        tests/unit/test_i2c_transaction_logger.cpp
         tests/unit/test_trng.cpp
         tests/unit/test_ble_core.cpp
         tests/unit/test_saradc.cpp

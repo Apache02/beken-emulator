@@ -44,7 +44,7 @@ std::string hex(const char *format, uint32_t value) {
 } // namespace
 
 I2c1::I2c1(std::string name, const Clock &clock, Line irq, uint32_t ref_hz)
-    : name_(std::move(name)), clock_(clock), irq_(std::move(irq)), ref_hz_(ref_hz) {}
+    : name_(std::move(name)), clock_(clock), irq_(std::move(irq)), ref_hz_(ref_hz), transactions_(log(), name_) {}
 
 void I2c1::attach(I2cDevice *device) {
     auto [it, added] = devices_.emplace(device->address(), device);
@@ -61,6 +61,7 @@ void I2c1::reset() {
     device_                    = nullptr;
     event_.reset();
     level_ = false;
+    transactions_.clear();
     drive();
 }
 
@@ -119,12 +120,15 @@ uint64_t I2c1::byte_ns() const {
 void I2c1::schedule(Kind kind, uint64_t duration_ns) { event_ = Event{clock_.now_ns() + duration_ns, kind}; }
 
 void I2c1::start() {
+    settle_read();
     busy_  = true;
     phase_ = Phase::Idle;
     schedule(Kind::Address, byte_ns());
 }
 
 void I2c1::stop() {
+    settle_read();
+    transactions_.stop();
     if (device_) {
         device_->stop();
         device_ = nullptr;
@@ -136,6 +140,7 @@ void I2c1::stop() {
 }
 
 void I2c1::abort() {
+    transactions_.abort();
     if (device_) device_->stop();
     device_ = nullptr;
     phase_  = Phase::Idle;
@@ -145,6 +150,7 @@ void I2c1::abort() {
 
 // Software cleared `int_flag`: the next phase starts.
 void I2c1::proceed() {
+    settle_read();
     if (config_ & kTxMode)
         schedule(Kind::Send, byte_ns());
     else if (phase_ == Phase::Addressed || (config_ & kTxAck))
@@ -160,9 +166,7 @@ void I2c1::finish(Kind kind) {
             auto           it      = devices_.find(static_cast<uint8_t>(address));
             device_                = address < 0x80 && it != devices_.end() ? it->second : nullptr;
             rx_ack_                = device_ && device_->begin(read);
-            log().log(Level::Debug,
-                      "address " + hex("0x%02X", address) + (read ? " read: " : " write: ") +
-                          (rx_ack_ ? "ack" : "nack"));
+            transactions_.address(static_cast<uint8_t>(address), read, rx_ack_);
             if (!rx_ack_) device_ = nullptr;
             phase_ = Phase::Addressed;
             config_ |= kIntFlag;
@@ -170,13 +174,13 @@ void I2c1::finish(Kind kind) {
         }
         case Kind::Send:
             rx_ack_ = device_ && device_->write(static_cast<uint8_t>(data_));
-            log().log(Level::Debug, "write " + hex("0x%02X", data_) + (rx_ack_ ? ": ack" : ": nack"));
+            transactions_.write(static_cast<uint8_t>(data_), rx_ack_);
             phase_ = Phase::Data;
             config_ |= kIntFlag;
             break;
         case Kind::Receive:
             data_ = device_ ? device_->read() : 0xFF;
-            log().log(Level::Debug, "read " + hex("0x%02X", data_));
+            transactions_.received(static_cast<uint8_t>(data_));
             ack_req_ = true;
             phase_   = Phase::Data;
             config_ |= kIntFlag;
@@ -193,5 +197,9 @@ void I2c1::drive() {
     }
     if (irq_) irq_(level);
 }
+
+// Software answered the received byte, if there is one: `tx_ack` is the ACK
+// the master sends.
+void I2c1::settle_read() { transactions_.answer((config_ & kTxAck) != 0); }
 
 } // namespace bk

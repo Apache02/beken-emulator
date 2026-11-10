@@ -77,7 +77,9 @@ to the I2C controller module `NAME` (`--i2c1 TYPE` and `--i2c2 TYPE` are the
 shorthands for `I2C1` and `I2C2`); `--log-level NAME=LEVEL` sets the level (`debug`, `info`, `warning`,
 `error` or `none`, which silences the logger) of one logger, for example
 `--log-level bus=debug`, or of all of them with `--log-level all=debug`; later
-options win. The emulator runs until it receives SIGINT or SIGTERM.
+options win. The I2C controllers log every transaction at `info` as one line from
+the START to the STOP (`I2C1: START 0x30 W ACK, write 0x10 ACK, RESTART 0x30 R ACK,
+read 0x5A ACK 0x5B NACK, STOP`), and each bus event and register write at `debug`. The emulator runs until it receives SIGINT or SIGTERM.
 
 ### Configuration
 

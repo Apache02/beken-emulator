@@ -8,6 +8,7 @@
 
 #include "core/module.h"
 #include "i2c/device.h"
+#include "i2c/transaction_logger.h"
 
 namespace bk {
 
@@ -38,6 +39,8 @@ namespace bk {
 // Not modelled: slave mode, arbitration loss, SCL timeout (their flags read 0),
 // the idle and SCL timing fields, `clk_src` and the interrupt mode. `tx_mode`
 // and `master` are derived, not stored.
+//
+// The bus is logged as I2c1 logs it, by an I2cTransactionLogger.
 class I2c2 : public Module, public I2cBus {
   public:
     // `irq` may be empty; `ref_hz` is the clock the bus divider divides.
@@ -76,6 +79,7 @@ class I2c2 : public Module, public I2cBus {
     void     proceed();
     void     finish(Kind kind);
     void     drive();
+    void     settle_read();
 
     std::string                    name_;
     const Clock                   &clock_;
@@ -83,14 +87,19 @@ class I2c2 : public Module, public I2cBus {
     uint32_t                       ref_hz_;
     std::map<uint8_t, I2cDevice *> devices_;
 
-    uint32_t             config_   = 0;
-    uint32_t             status_   = 0; // the writable fields and `ack`
-    uint32_t             data_     = 0;
-    bool                 transmit_ = false, ack_req_ = false, busy_ = false;
-    Phase                phase_  = Phase::Idle;
-    I2cDevice           *device_ = nullptr;
+    uint32_t config_ = 0; // all of it: bus timing, clock divider, enable
+    uint32_t data_   = 0;
+
+    uint32_t status_   = 0;
+    bool     transmit_ = false;
+
+    bool                 ack_req_ = false;
+    bool                 busy_    = false;
+    Phase                phase_   = Phase::Idle;
+    I2cDevice           *device_  = nullptr;
     std::optional<Event> event_;
     bool                 level_ = false;
+    I2cTransactionLogger transactions_;
 };
 
 } // namespace bk

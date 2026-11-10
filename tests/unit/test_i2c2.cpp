@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -45,15 +46,19 @@ struct Recorder : I2cDevice {
 };
 
 struct Fixture {
-    FakeClock         clock;
-    std::vector<bool> irq;
-    I2c2              i2c;
-    Recorder          dev{0x30};
+    std::ostringstream out;
+    FakeClock          clock;
+    std::vector<bool>  irq;
+    I2c2               i2c;
+    Recorder           dev{0x30};
 
     explicit Fixture(uint32_t ref_hz = 26'000'000) : i2c("I2C2", clock, [this](bool v) { irq.push_back(v); }, ref_hz) {
+        Logger::reset_for_tests();
+        Logger::configure(out, false);
         i2c.attach(&dev);
         w(kConfig, kEnable);
     }
+    ~Fixture() { Logger::reset_for_tests(); }
 
     void     w(uint32_t off, uint32_t v) { i2c.write("regs", off, 4, v); }
     uint32_t r(uint32_t off) { return i2c.read("regs", off, 4); }
@@ -287,6 +292,28 @@ TEST_CASE("i2c2 reset clears registers, the event and the line") {
     CHECK(f.r(kStatus) == kRxFifoEmpty);
     CHECK(f.r(kData) == 0);
     CHECK_FALSE(f.i2c.next_event_ns().has_value());
+}
+
+TEST_CASE("i2c2 logs a write-then-read transaction as one info line") {
+    Fixture f;
+    f.w(kData, 0x60); // address 0x30, write
+    f.w(kStatus, kStart);
+    f.step();
+    f.w(kData, 0x10);
+    f.w(kStatus, kAck);
+    f.step();
+    f.w(kData, 0x61); // repeated START, address 0x30, read
+    f.w(kStatus, kStart);
+    f.step();
+    f.w(kStatus, kAck); // first byte
+    f.step();
+    f.w(kStatus, kAck); // ACK it, second byte
+    f.step();
+    CHECK(f.out.str().empty()); // nothing until the STOP
+    f.w(kStatus, kStop);        // NACK it and stop
+    f.step();
+    CHECK(f.out.str() == "[I] emulator.i2c2: I2C2: START 0x30 W ACK, write 0x10 ACK, RESTART 0x30 R ACK, "
+                         "read 0x5A ACK 0x5B NACK, STOP\n");
 }
 
 TEST_CASE("i2c2 works without an interrupt line") {

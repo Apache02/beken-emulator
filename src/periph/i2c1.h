@@ -8,6 +8,7 @@
 
 #include "core/module.h"
 #include "i2c/device.h"
+#include "i2c/transaction_logger.h"
 
 namespace bk {
 
@@ -20,6 +21,9 @@ namespace bk {
 // its working copy of the register and writes that copy back for the rest of
 // the transfer, and a latched `stop` would turn the next transfer's START into a
 // STOP.
+//
+// The bus is logged by an I2cTransactionLogger: one line per transaction at info; every
+// bus event, the register writes and the interrupt line at debug.
 class I2c1 : public Module, public I2cBus {
   public:
     // `irq` may be empty; `ref_hz` is the clock the bus divider divides.
@@ -58,6 +62,7 @@ class I2c1 : public Module, public I2cBus {
     void     proceed();
     void     finish(Kind kind);
     void     drive();
+    void     settle_read();
 
     std::string                    name_;
     const Clock                   &clock_;
@@ -65,13 +70,17 @@ class I2c1 : public Module, public I2cBus {
     uint32_t                       ref_hz_;
     std::map<uint8_t, I2cDevice *> devices_;
 
-    uint32_t             config_ = 0; // the writable fields
-    uint32_t             data_   = 0;
-    bool                 rx_ack_ = false, ack_req_ = false, busy_ = false;
-    Phase                phase_  = Phase::Idle;
-    I2cDevice           *device_ = nullptr;
+    uint32_t config_ = 0; // the writable fields
+    uint32_t data_   = 0;
+
+    bool                 rx_ack_  = false;
+    bool                 ack_req_ = false;
+    bool                 busy_    = false;
+    Phase                phase_   = Phase::Idle;
+    I2cDevice           *device_  = nullptr;
     std::optional<Event> event_;
     bool                 level_ = false;
+    I2cTransactionLogger transactions_;
 };
 
 } // namespace bk

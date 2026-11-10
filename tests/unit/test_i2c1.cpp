@@ -47,14 +47,18 @@ struct Recorder : I2cDevice {
 };
 
 struct Fixture {
-    FakeClock         clock;
-    std::vector<bool> irq;
-    I2c1              i2c;
-    Recorder          dev{0x30};
+    std::ostringstream out;
+    FakeClock          clock;
+    std::vector<bool>  irq;
+    I2c1               i2c;
+    Recorder           dev{0x30};
 
     explicit Fixture(uint32_t ref_hz = 26'000'000) : i2c("I2C1", clock, [this](bool v) { irq.push_back(v); }, ref_hz) {
+        Logger::reset_for_tests();
+        Logger::configure(out, false);
         i2c.attach(&dev);
     }
+    ~Fixture() { Logger::reset_for_tests(); }
 
     void     w(uint32_t off, uint32_t v) { i2c.write("regs", off, 4, v); }
     uint32_t r(uint32_t off) { return i2c.read("regs", off, 4); }
@@ -329,6 +333,40 @@ TEST_CASE("i2c1 reset clears registers, the event and the line") {
     CHECK(f.r(kConfig) == 0);
     CHECK(f.r(kData) == 0);
     CHECK_FALSE(f.i2c.next_event_ns().has_value());
+}
+
+TEST_CASE("i2c1 logs a write-then-read transaction as one info line") {
+    Fixture f;
+    f.w(kData, 0x60); // address 0x30, write
+    f.w(kConfig, kEnable | kStart | kTxMode);
+    f.step();
+    f.w(kData, 0x10);
+    f.w(kConfig, kEnable | kTxMode);
+    f.step();
+    f.w(kData, 0x61); // repeated START, address 0x30, read
+    f.w(kConfig, kEnable | kStart);
+    f.step();
+    f.w(kConfig, kEnable | kTxAck); // first byte
+    f.step();
+    f.w(kConfig, kEnable | kTxAck); // ACK it, second byte
+    f.step();
+    CHECK(f.out.str().empty());    // nothing until the STOP
+    f.w(kConfig, kEnable | kStop); // NACK it and stop
+    f.step();
+    CHECK(f.out.str() == "[I] emulator.i2c1: I2C1: START 0x30 W ACK, write 0x10 ACK, RESTART 0x30 R ACK, "
+                         "read 0x5A ACK 0x5B NACK, STOP\n");
+}
+
+TEST_CASE("i2c1 logs a transfer cut off by clearing enable as aborted") {
+    Fixture f;
+    f.w(kData, 0x62); // address 0x31: nobody
+    f.w(kConfig, kEnable | kStart | kTxMode);
+    f.step();
+    f.w(kData, 0x01);
+    f.w(kConfig, kEnable | kTxMode);
+    f.step();
+    f.w(kConfig, 0);
+    CHECK(f.out.str() == "[I] emulator.i2c1: I2C1: START 0x31 W NACK, write 0x01 NACK, aborted\n");
 }
 
 TEST_CASE("i2c1 works without an interrupt line") {
