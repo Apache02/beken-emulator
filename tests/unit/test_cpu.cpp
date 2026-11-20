@@ -263,9 +263,10 @@ TEST_CASE("fiq masks both") {
     CHECK(f.cpu.reg(Reg::LR) == 0x104);
     CHECK(f.pc() == Fixture::handler(0x1C));
 
-    // Neither request can preempt the FIQ handler.
+    // Neither request can preempt the FIQ handler (the slice may be shorter:
+    // both requests stay masked).
     f.cpu.raise_irq(true);
-    CHECK(f.cpu.run(10) == Result{RunResult::Budget, 10});
+    CHECK(f.cpu.run(10).first == RunResult::Budget);
     CHECK(f.cpsr() == (kFiq | kI | kF));
     CHECK(f.cpu.reg(Reg::LR) == 0x104);
     CHECK(f.pc() == Fixture::handler(0x1C));
@@ -325,6 +326,24 @@ TEST_CASE("an interrupt masked at wfi is taken once the firmware unmasks it") {
     CHECK((f.cpsr() & 0x1F) == kIrq);
     CHECK(f.cpu.reg(Reg::SPSR) == kSys);
     CHECK(f.cpu.reg(Reg::LR) == 0x10C); // the masking instruction runs after the handler
+}
+
+TEST_CASE("an interrupt masked at the end of a slice is taken once the firmware unmasks it") {
+    // A ten-instruction loop that unmasks for one instruction: every
+    // 1000-instruction slice ends at the same masked point with I set.
+    constexpr uint32_t kMsrSys = 0xE321F01F, kMsrSysMasked = 0xE321F09F; // msr cpsr_c, #imm
+    Fixture            f;
+    f.put(0x100, kMsrSys);
+    f.put(0x104, kMsrSysMasked);
+    for (uint32_t a = 0x108; a < 0x124; a += 4) f.put(a, mov_r0(1));
+    f.put(0x124, b(0x124, 0x100));
+    f.cpu.set_reg(Reg::PC, 0x108);
+    f.cpu.set_reg(Reg::CPSR, kSys | kI);
+    f.cpu.raise_irq(true);
+    for (int i = 0; i < 100 && (f.cpsr() & 0x1F) != kIrq; ++i) f.cpu.run(1000);
+    CHECK((f.cpsr() & 0x1F) == kIrq);
+    CHECK(f.cpu.reg(Reg::SPSR) == kSys);
+    CHECK(f.cpu.reg(Reg::LR) == 0x108); // taken before the masking instruction
 }
 
 TEST_CASE("wfi recognised only in the r0 form") {

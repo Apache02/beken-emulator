@@ -68,6 +68,7 @@ void Cpu::reset(uint32_t pc) {
     irq_ = fiq_ = false;
     pending_.reset();
     restart_ = false;
+    skew_    = 0;
 }
 
 bool Cpu::thumb() { return (reg(Reg::CPSR) & kBitT) != 0; }
@@ -107,6 +108,11 @@ bool Cpu::take_pending(uint32_t pc) {
     return false;
 }
 
+bool Cpu::masked_pending() {
+    const uint32_t cpsr = reg(Reg::CPSR);
+    return (irq_ && (cpsr & kBitI)) || (fiq_ && (cpsr & kBitF));
+}
+
 bool Cpu::at_wait_for_interrupt() {
     const uint32_t pc = reg(Reg::PC);
     if (pc < 4) return false;
@@ -138,6 +144,8 @@ std::pair<RunResult, uint32_t> Cpu::run(uint32_t budget) {
     take_pending(reg(Reg::PC));
     // Unicorn treats a count of 0 as "no limit", so an empty budget runs nothing.
     if (budget == 0) return {RunResult::Budget, 0};
+    if (skew_ != 0 && budget > 1 && masked_pending()) budget -= 1 + skew_ % (budget / 2);
+    skew_ = 0;
 
     int64_t remaining = budget;
     for (;;) {
@@ -185,6 +193,15 @@ std::pair<RunResult, uint32_t> Cpu::run(uint32_t budget) {
         if (!irq_ && !fiq_) return {RunResult::Idle, 1};
         wake_steps_ = kWakeSteps;
         return {RunResult::Budget, 1};
+    }
+    // A loop whose length divides the slice would end every slice at the same
+    // masked point and never be seen unmasked: shorten the next slice by a
+    // varying amount so that its end moves through the loop.
+    if (masked_pending()) {
+        skew_seed_ ^= skew_seed_ << 13;
+        skew_seed_ ^= skew_seed_ >> 17;
+        skew_seed_ ^= skew_seed_ << 5;
+        skew_ = skew_seed_;
     }
     return {RunResult::Budget, budget};
 }

@@ -44,7 +44,11 @@ class Cpu {
     // Interrupts are taken between slices. A wait with an interrupt pending but
     // masked does not idle (Budget with 1): as on the chip, the core wakes and
     // runs on, and the next instructions run one at a time so that the
-    // interrupt is taken as soon as the firmware unmasks it.
+    // interrupt is taken as soon as the firmware unmasks it. When a slice ends
+    // with an interrupt pending but masked and it is still so when the next
+    // slice starts, that slice is shorter by a varying amount (Budget with the
+    // shorter count), so that a loop whose length divides the slice cannot
+    // hide its unmasked moments from the slice ends.
     std::pair<RunResult, uint32_t> run(uint32_t budget);
 
     void raise_irq(bool level) { irq_ = level; }
@@ -89,6 +93,8 @@ class Cpu {
     bool        take_pending(uint32_t pc);
     bool        thumb();
     bool        at_wait_for_interrupt();
+    // Whether a raised interrupt line is held off by its CPSR mask bit.
+    bool masked_pending();
 
     uc_engine *uc_        = nullptr;
     uc_hook    intr_hook_ = 0;
@@ -98,7 +104,11 @@ class Cpu {
     bool       stopped_   = false;
     // Instructions left to run one at a time after a wait that an interrupt
     // masked at the time woke (see run()).
-    uint32_t                wake_steps_ = 0;
+    uint32_t wake_steps_ = 0;
+    // How much shorter the next slice is (see run()); 0 for a full slice. The
+    // seed of the xorshift sequence it comes from keeps runs reproducible.
+    uint32_t                skew_      = 0;
+    uint32_t                skew_seed_ = 0x9E3779B9;
     std::optional<Pending>  pending_;
     std::optional<uint32_t> bad_intno_;
 };

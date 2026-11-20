@@ -28,7 +28,8 @@ class Scheduler : public Clock {
     //  - the CPU stopped: the scheduler is stopped, nothing is ticked;
     //  - the slice ended at a wait for interrupt: time jumps to the earliest
     //    module event later than now, or one slice of time if there is none;
-    //  - otherwise time advances by one slice (kSlice instructions).
+    //  - otherwise time advances by the instructions the CPU reports, at most
+    //    one slice (kSlice instructions).
     // Then ticks every module. Returns false once stopped.
     bool step();
     // Steps until the scheduler stops or should_stop() returns true (checked
